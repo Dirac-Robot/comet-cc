@@ -8,9 +8,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from comet_cc.schemas import L1Memory
+
+
+# CC wraps environment preamble (available skills, workspace notices, etc.)
+# in <system-reminder>...</system-reminder> blocks INSIDE the user message's
+# text. The same preamble repeats on every turn, so if we leave it in the
+# sensor's view every turn looks identical -> sensor never detects topic
+# shifts. Strip these blocks when extracting text.
+_SYSTEM_REMINDER_RE = re.compile(
+    r"<system-reminder>.*?</system-reminder>", re.DOTALL,
+)
+
+
+def _strip_boilerplate(text: str) -> str:
+    cleaned = _SYSTEM_REMINDER_RE.sub("", text)
+    return cleaned.strip()
 
 
 def _fingerprint(role: str, text: str) -> str:
@@ -19,9 +35,11 @@ def _fingerprint(role: str, text: str) -> str:
 
 def _text_of(content: Any) -> str:
     """Flatten a message's `content` into a single string. Handles both the
-    string shortcut and the list-of-blocks form CC uses."""
+    string shortcut and the list-of-blocks form CC uses. Strips
+    <system-reminder> preamble — it's identical across turns and drowns out
+    the actual user intent when the sensor compares buffer entries."""
     if isinstance(content, str):
-        return content
+        return _strip_boilerplate(content)
     if not isinstance(content, list):
         return ""
     out: list[str] = []
@@ -30,7 +48,9 @@ def _text_of(content: Any) -> str:
             continue
         t = blk.get("type")
         if t == "text":
-            out.append(blk.get("text", ""))
+            cleaned = _strip_boilerplate(blk.get("text", ""))
+            if cleaned:
+                out.append(cleaned)
         elif t == "thinking":
             # Exclude thinking blocks from L1 fodder — they're ephemeral.
             continue
