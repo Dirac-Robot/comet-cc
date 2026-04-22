@@ -128,6 +128,18 @@ class Daemon:
         })
         return {"ok": True, "queued": True, "depth": self.compact_queue.qsize()}
 
+    def _m_queue_depth(self, _p: dict) -> dict:
+        """Reports pending jobs. Useful for tests to await idle state."""
+        return {
+            "ok": True,
+            "queue_size": self.compact_queue.qsize(),
+            "active": self._active_job_count(),
+        }
+
+    def _active_job_count(self) -> int:
+        """1 if a compact job is mid-flight in the worker, 0 otherwise."""
+        return 1 if getattr(self, "_worker_busy", False) else 0
+
     # ---------- compact worker ----------
 
     def _compact_loop(self) -> None:
@@ -138,11 +150,13 @@ class Daemon:
                 job = self.compact_queue.get(timeout=1.0)
             except Exception:
                 continue
+            self._worker_busy = True
             try:
                 self._do_compact(job)
             except Exception as e:
                 logger.exception(f"compact job failed: {e}")
             finally:
+                self._worker_busy = False
                 self.compact_queue.task_done()
 
     def _do_compact(self, job: dict) -> None:

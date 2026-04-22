@@ -83,3 +83,9 @@ def queue_compact(session_id: str, transcript_path: str,
     """Fire-and-forget: daemon queues a compact job in its worker thread."""
     return _rpc("queue_compact", timeout,
                 session_id=session_id, transcript_path=transcript_path)
+
+
+def queue_depth(timeout: float = 2.0) -> dict | None:
+    """Ask the daemon how many compact jobs are pending + whether one is
+    currently mid-flight. Tests use this to wait for a quiescent state."""
+    return _rpc("queue_depth", timeout)
