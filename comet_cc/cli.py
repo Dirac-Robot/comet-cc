@@ -1,12 +1,13 @@
-"""`comet-cc` CLI — install/uninstall hooks + skill, daemon lifecycle,
-and memory operations for Skill-driven recall (search/read-node/list-session).
+"""`comet-cc` CLI — install (cert + skill), daemon lifecycle, `run` launcher
+to wrap Claude Code with proxy env vars, and memory operations for Skill-driven
+recall (search/read-node/list-session).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import shlex
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -14,88 +15,12 @@ from pathlib import Path
 from loguru import logger
 
 from comet_cc import client, config, daemon_mgmt
+from comet_cc.proxy import cert as cert_module
 
 _CLAUDE_HOME = Path.home() / ".claude"
-_CLAUDE_SETTINGS = _CLAUDE_HOME / "settings.json"
 _CLAUDE_SKILLS_DIR = _CLAUDE_HOME / "skills"
 _SKILL_NAME = "comet-cc-memory"
 _PACKAGE_SKILL_DIR = Path(__file__).parent.parent / "skills" / _SKILL_NAME
-
-
-def _hook_commands() -> dict[str, str]:
-    py = shlex.quote(sys.executable)
-    return {
-        "SessionStart": f"{py} -m comet_cc.hooks.session_start",
-        "UserPromptSubmit": f"{py} -m comet_cc.hooks.user_prompt",
-        "Stop": f"{py} -m comet_cc.hooks.stop",
-        "PreCompact": f"{py} -m comet_cc.hooks.pre_compact",
-    }
-
-
-_HOOK_MODULES = {
-    "SessionStart": "comet_cc.hooks.session_start",
-    "UserPromptSubmit": "comet_cc.hooks.user_prompt",
-    "Stop": "comet_cc.hooks.stop",
-    "PreCompact": "comet_cc.hooks.pre_compact",
-}
-
-
-# ---------- settings.json I/O ----------
-
-
-def _load_settings() -> dict:
-    if _CLAUDE_SETTINGS.exists():
-        try:
-            return json.loads(_CLAUDE_SETTINGS.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            logger.error(f"{_CLAUDE_SETTINGS} is not valid JSON — aborting")
-            sys.exit(1)
-    return {}
-
-
-def _write_settings(data: dict) -> None:
-    _CLAUDE_SETTINGS.parent.mkdir(parents=True, exist_ok=True)
-    _CLAUDE_SETTINGS.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8",
-    )
-
-
-def _command_targets_module(cmd: str, module: str) -> bool:
-    return f"-m {module}" in cmd or module in cmd.split()
-
-
-def _install_hooks(settings: dict) -> dict:
-    hooks = settings.setdefault("hooks", {})
-    commands = _hook_commands()
-    for event, command in commands.items():
-        module = _HOOK_MODULES[event]
-        bucket = hooks.setdefault(event, [])
-        for matcher in bucket:
-            matcher["hooks"] = [
-                h for h in matcher.get("hooks", [])
-                if not _command_targets_module(h.get("command", ""), module)
-            ]
-        bucket[:] = [m for m in bucket if m.get("hooks")]
-        bucket.append({
-            "matcher": "*",
-            "hooks": [{"type": "command", "command": command}],
-        })
-    return settings
-
-
-def _uninstall_hooks(settings: dict) -> dict:
-    hooks = settings.get("hooks", {})
-    for event, module in _HOOK_MODULES.items():
-        bucket = hooks.get(event, [])
-        for matcher in bucket:
-            matcher["hooks"] = [
-                h for h in matcher.get("hooks", [])
-                if not _command_targets_module(h.get("command", ""), module)
-            ]
-        hooks[event] = [m for m in bucket if m.get("hooks")]
-        if not hooks[event]:
-            hooks.pop(event, None)
-    return settings
 
 
 # ---------- skill install ----------
@@ -123,42 +48,37 @@ def _uninstall_skill() -> None:
 
 
 def cmd_install(_args) -> None:
-    settings = _install_hooks(_load_settings())
-    _write_settings(settings)
+    paths = cert_module.ensure_certs()
     skill_dest = _install_skill()
     config.home()
-    print(f"Installed hooks → {_CLAUDE_SETTINGS}")
-    if skill_dest:
-        print(f"Installed skill → {skill_dest}")
     print(f"Home: {config.home()}")
-    print("Run `comet-cc daemon start` to preload the embedder now, or let")
-    print("SessionStart auto-spawn it on the first Claude Code session.")
+    print(f"CA cert: {paths['ca']}")
+    if skill_dest:
+        print(f"Skill : {skill_dest}")
+    print()
+    print("Next:")
+    print(f"  1. Start the daemon:   comet-cc daemon start")
+    print(f"  2. Launch CC through the proxy:")
+    print(f"       comet-cc run claude [args...]")
+    print(f"     (or set ANTHROPIC_BASE_URL + NODE_EXTRA_CA_CERTS manually; "
+          f"see `comet-cc env`).")
 
 
 def cmd_uninstall(_args) -> None:
-    settings = _uninstall_hooks(_load_settings())
-    _write_settings(settings)
     _uninstall_skill()
-    print(f"Removed hooks from {_CLAUDE_SETTINGS}")
     print(f"Removed skill from {_CLAUDE_SKILLS_DIR / _SKILL_NAME}")
+    print(f"Note: certs + store kept at {config.home()}. "
+          f"Delete the directory manually if you want a full wipe.")
 
 
 def cmd_status(_args) -> None:
-    settings = _load_settings()
-    hooks = settings.get("hooks", {})
-    print("Hooks:")
-    for event, module in _HOOK_MODULES.items():
-        installed_cmd = None
-        for matcher in hooks.get(event, []):
-            for h in matcher.get("hooks", []):
-                if _command_targets_module(h.get("command", ""), module):
-                    installed_cmd = h.get("command")
-                    break
-            if installed_cmd:
-                break
-        marker = "✓" if installed_cmd else "✗"
-        shown = installed_cmd or f"(not installed — target: {_hook_commands()[event]})"
-        print(f"  {marker} {event:18s} {shown}")
+    paths = config.cert_dir()
+    ca = paths / "ca.crt"
+    server_pem = paths / "server.pem"
+    print("Cert:")
+    for label, p in [("CA", ca), ("leaf bundle", server_pem)]:
+        mark = "✓" if p.exists() else "✗"
+        print(f"  {mark} {label}: {p}")
 
     skill_dest = _CLAUDE_SKILLS_DIR / _SKILL_NAME
     skill_mark = "✓" if skill_dest.exists() else "✗"
@@ -169,9 +89,43 @@ def cmd_status(_args) -> None:
     pid = daemon_mgmt.read_pid()
     print(f"  {'✓' if running else '✗'} running={running} pid={pid} "
           f"socket={config.daemon_socket()}")
+    print(f"  proxy: https://{config.PROXY_HOST}:{config.PROXY_PORT} "
+          f"-> {config.UPSTREAM_URL}")
 
     print(f"\nHome: {config.home()}")
     print(f"Store: {config.store_path()}")
+
+
+def cmd_env(_args) -> None:
+    """Print shell exports for manual wrapping (non-interactive use)."""
+    paths = cert_module.ensure_certs()
+    print(f'export ANTHROPIC_BASE_URL="https://{config.PROXY_HOST}:{config.PROXY_PORT}"')
+    print(f'export NODE_EXTRA_CA_CERTS="{paths["ca"]}"')
+
+
+def cmd_run(args) -> None:
+    """Exec an arbitrary command with proxy env vars pre-set. Typical:
+       comet-cc run claude -p 'hi' --model sonnet
+    """
+    argv = args.argv
+    if not argv:
+        print("usage: comet-cc run <command> [args...]", file=sys.stderr)
+        sys.exit(2)
+    paths = cert_module.ensure_certs()
+    env = {
+        **os.environ,
+        "ANTHROPIC_BASE_URL": f"https://{config.PROXY_HOST}:{config.PROXY_PORT}",
+        "NODE_EXTRA_CA_CERTS": str(paths["ca"]),
+    }
+    # Give the daemon a chance to boot opportunistically so first request
+    # doesn't race against a cold listener.
+    if not daemon_mgmt.is_running():
+        daemon_mgmt.ensure_running(wait_seconds=20.0)
+    try:
+        os.execvpe(argv[0], argv, env)
+    except FileNotFoundError:
+        print(f"command not found: {argv[0]}", file=sys.stderr)
+        sys.exit(127)
 
 
 def cmd_daemon(args) -> None:
@@ -280,12 +234,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="comet-cc")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("install")
-    sub.add_parser("uninstall")
-    sub.add_parser("status")
+    sub.add_parser("install", help="Generate CA cert + install skill")
+    sub.add_parser("uninstall", help="Remove skill (cert + store kept)")
+    sub.add_parser("status", help="Show cert, skill, daemon, proxy status")
+    sub.add_parser("env", help="Print shell exports for ANTHROPIC_BASE_URL + NODE_EXTRA_CA_CERTS")
 
-    d = sub.add_parser("daemon")
+    d = sub.add_parser("daemon", help="Start/stop/status the background daemon + proxy")
     d.add_argument("action", choices=["start", "stop", "status"])
+
+    r = sub.add_parser("run", help="Exec a command with proxy env vars pre-set (typically: comet-cc run claude ...)")
+    r.add_argument("argv", nargs=argparse.REMAINDER)
 
     s = sub.add_parser("search", help="Semantic search across stored memory")
     s.add_argument("query")
@@ -294,14 +252,14 @@ def main() -> None:
     s.add_argument("--min-score", type=float, default=0.30)
     s.add_argument("--no-brief", action="store_true")
 
-    r = sub.add_parser("read-node", help="Read a specific node by id")
-    r.add_argument("node_id")
-    r.add_argument("--session", default=None)
+    rn = sub.add_parser("read-node", help="Read a specific node by id")
+    rn.add_argument("node_id")
+    rn.add_argument("--session", default=None)
 
     ls = sub.add_parser("list-session", help="List all nodes in a session")
     ls.add_argument("session")
 
-    b = sub.add_parser("brief", help="Show this session's buttered brief")
+    b = sub.add_parser("brief", help="Show this session's rolling brief")
     b.add_argument("session")
 
     args = parser.parse_args()
@@ -309,7 +267,9 @@ def main() -> None:
         "install": cmd_install,
         "uninstall": cmd_uninstall,
         "status": cmd_status,
+        "env": cmd_env,
         "daemon": cmd_daemon,
+        "run": cmd_run,
         "search": cmd_search,
         "read-node": cmd_read_node,
         "list-session": cmd_list_session,

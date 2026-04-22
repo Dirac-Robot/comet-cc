@@ -163,7 +163,11 @@ def _modality_instructions(modality: str) -> tuple[str, str, str]:
 
 def _invoke_claude(prompt: str, model: str, timeout: int) -> str | None:
     import os as _os
-    env = {**_os.environ, "COMET_CC_INTERNAL": "1"}
+    # Strip proxy env — child `claude -p` must hit real Anthropic directly,
+    # not our own proxy (would infinite-loop on compacter's own traffic).
+    env = {k: v for k, v in _os.environ.items()
+           if k not in ("ANTHROPIC_BASE_URL", "NODE_EXTRA_CA_CERTS")}
+    env["COMET_CC_INTERNAL"] = "1"
     try:
         proc = subprocess.run(
             ["claude", "-p", prompt, "--model", model, "--output-format", "json"],

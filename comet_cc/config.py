@@ -57,3 +57,22 @@ MIN_SIMILARITY = float(os.environ.get("COMET_CC_MIN_SIM", "0.30"))
 
 # Tail of L1 buffer passed to the sensor as "prior context"
 SENSOR_BUFFER_TAIL = 5
+
+
+# ---------- Proxy architecture (new) ----------
+
+def cert_dir() -> Path:
+    d = home() / "certs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def proxy_log() -> Path:
+    d = home() / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "proxy.log"
+
+
+PROXY_HOST = os.environ.get("COMET_CC_PROXY_HOST", "127.0.0.1")
+PROXY_PORT = int(os.environ.get("COMET_CC_PROXY_PORT", "8443"))
+UPSTREAM_URL = os.environ.get("COMET_CC_UPSTREAM", "https://api.anthropic.com")

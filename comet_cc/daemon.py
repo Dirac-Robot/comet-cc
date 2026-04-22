@@ -1,12 +1,13 @@
 """CoMeT-CC daemon — persistent process holding warm BGE-M3 + NodeStore +
-background compact worker. Hooks RPC in over a Unix socket.
+background compact worker + TLS proxy. CC hits the proxy via
+ANTHROPIC_BASE_URL; skill CLI hits the Unix socket for search/read-node.
 
 Runs with a PID file. `comet-cc daemon start/stop/status` manage it.
-SessionStart hook also auto-spawns it opportunistically.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -29,6 +30,8 @@ from comet_cc.core.retriever import get_context_window, render_nodes, render_ses
 from comet_cc.core.store import NodeStore
 from comet_cc.parser import choose_policy_for_bundle, parse_transcript
 from comet_cc.policies import ALL_POLICIES
+from comet_cc.proxy.server import ProxyServer
+from comet_cc.proxy.trim import TrimOrchestrator
 from comet_cc.schemas import L1Memory, MemoryNode
 
 
@@ -55,6 +58,22 @@ class Daemon:
                                         name="compact-worker", daemon=True)
         self._worker.start()
 
+        # Trim orchestrator — drives sensor+compacter off the request path,
+        # holds per-session summary state.
+        self.trim = TrimOrchestrator(store=self.store, store_lock=self._store_lock)
+        self._trim_worker = threading.Thread(
+            target=self.trim.run_jobs, args=(self._stop,),
+            name="trim-worker", daemon=True,
+        )
+        self._trim_worker.start()
+
+        # Proxy lives in its own asyncio loop on a dedicated thread.
+        self._proxy: ProxyServer | None = None
+        self._proxy_thread = threading.Thread(
+            target=self._proxy_run, name="proxy-loop", daemon=True,
+        )
+        self._proxy_thread.start()
+
     # ---------- RPC handlers ----------
 
     def handle(self, method: str, params: dict) -> dict:
@@ -68,7 +87,10 @@ class Daemon:
             return {"ok": False, "error": str(e)}
 
     def _m_ping(self, _params) -> dict:
-        return {"ok": True, "pong": True, "pid": os.getpid()}
+        return {
+            "ok": True, "pong": True, "pid": os.getpid(),
+            "proxy_host": config.PROXY_HOST, "proxy_port": config.PROXY_PORT,
+        }
 
     def _m_get_context_window(self, p: dict) -> dict:
         session_id = p.get("session_id") or None
@@ -238,6 +260,25 @@ class Daemon:
             f"imp={node.importance} recall={node.recall_mode} "
             f"absorbed={len(new_fps)} turns"
         )
+
+    # ---------- proxy thread ----------
+
+    def _proxy_run(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._proxy_coro())
+        except Exception as e:
+            logger.exception(f"proxy loop crashed: {e}")
+        finally:
+            loop.close()
+
+    async def _proxy_coro(self) -> None:
+        self._proxy = ProxyServer(rewrite=self.trim.rewrite)
+        await self._proxy.start()
+        while not self._stop.is_set():
+            await asyncio.sleep(0.5)
+        await self._proxy.stop()
 
     # ---------- server loop ----------
 
