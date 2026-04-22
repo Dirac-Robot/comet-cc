@@ -60,8 +60,17 @@ NODE_EXTRA_CA_CERTS=~/.comet-cc/certs/ca.crt
 ```
 
 and execs whatever command follows `run`. If you'd rather export those
-yourself (e.g., in a shell profile or IDE integration), `comet-cc env`
-prints the exact lines.
+yourself (e.g., in a shell profile or IDE integration):
+
+```bash
+eval "$(comet-cc env)"     # current shell
+claude                     # now goes through the proxy
+```
+
+For IDE integrations (VSCode, JetBrains launch configs, etc.), put
+`ANTHROPIC_BASE_URL` and `NODE_EXTRA_CA_CERTS` in the launch environment.
+To turn the proxy off, just run `claude` without those variables (or
+`comet-cc daemon stop` to free the port entirely).
 
 ## CLI
 
@@ -126,6 +135,17 @@ version is archived on the `hook-arch-archive` branch.
 | `COMET_CC_LOAD_THRESHOLD`     | `4`              | Sensor load (1–5) that trips compaction     |
 | `COMET_CC_MAX_CONTEXT_NODES`  | `8`              | Retrieval cap injected per turn             |
 | `COMET_CC_MIN_SIM`            | `0.30`           | Cosine floor for active-node matching       |
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `certificate verify failed` from CC | `NODE_EXTRA_CA_CERTS` not propagated. Use `comet-cc run claude …` or `eval "$(comet-cc env)"`. |
+| `connection refused` | Daemon isn't up. `comet-cc daemon status`; if down, `comet-cc daemon start`. |
+| Trim never fires on your expected turn | Haiku sensor is non-deterministic on short/related topics. Lower `COMET_CC_MAX_L1` to force the overflow path, or watch `~/.comet-cc/logs/daemon.log` to see what it judged. |
+| Stale/unwanted summary keeps appearing | Reset store: `comet-cc daemon stop && rm -rf ~/.comet-cc/store.sqlite && comet-cc daemon start`. |
+| Port 8443 already in use | Another service has it. Override: `COMET_CC_PROXY_PORT=18443 comet-cc daemon start` and re-export before launching CC. |
+| `comet-cc install` regenerating CA every time | It's idempotent — if `ca.crt` + `server.pem` exist it reuses them. If something's off, inspect `~/.comet-cc/certs/`. |
 
 ## Testing
 
