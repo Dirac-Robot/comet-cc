@@ -90,12 +90,10 @@ def main() -> None:
         f"pre_compact[{source}]: session={session_id} trigger={trigger} "
         f"nodes={len(nodes)} brief={bool(brief)}"
     )
-    emit_output({
-        "hookSpecificOutput": {
-            "hookEventName": "PreCompact",
-            "additionalContext": context,
-        },
-    })
+    # PreCompact schema rejects hookSpecificOutput — only top-level fields are
+    # accepted. `systemMessage` rides into CC's compactor prompt as a system
+    # directive, which is exactly where we want our anchors.
+    emit_output({"systemMessage": context})
 
 
 if __name__ == "__main__":
