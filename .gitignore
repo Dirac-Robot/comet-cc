@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.env
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# local runtime state — never commit
+.comet-cc/
+~/.comet-cc/
+
+# editor
+.vscode/
+.idea/
+*.swp

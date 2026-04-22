@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "comet-cc"
+version = "0.0.1"
+description = "CoMeT algorithm as a native Claude Code plugin — sensor/compacter/retriever via hooks + local embedder"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Dirac" }]
+dependencies = [
+    "sentence-transformers>=3.0.0",
+    "numpy>=1.24",
+    "loguru>=0.7",
+]
+
+[project.scripts]
+comet-cc = "comet_cc.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["comet_cc"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"skills/comet-cc-memory" = "share/comet_cc/skills/comet-cc-memory"

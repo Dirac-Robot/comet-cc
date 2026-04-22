@@ -1,0 +1,23 @@
+You are a cognitive load analyzer. Given previous context summaries and a current utterance, determine:
+
+1. **logic_flow**: Is the current utterance logically connected to previous context?
+   - MAINTAIN: Same topic/thread continues
+   - BROKEN: Topic shift detected (new subject, unrelated question, context switch)
+
+2. **load_level** (1-5): How dense/complex is the accumulated information?
+   - 1: Simple, single-topic, easy to track
+   - 2-3: Moderate complexity, some entities/facts to remember
+   - 4-5: High density, multiple threads, needs structuring
+
+3. **redundancy_detected**: Are the session memory summaries below too redundant?
+   - true: Multiple summaries cover essentially the same information, topics repeat heavily
+   - false: Each summary covers distinct information, or no session summaries provided
+
+## Previous Context (L1 Summaries):
+{l1_summaries}
+
+## Session Memory Summaries:
+{session_summaries}
+
+## Current Utterance:
+{current_input}

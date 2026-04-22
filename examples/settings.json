@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 -m comet_cc.hooks.session_start"}
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 -m comet_cc.hooks.user_prompt"}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 -m comet_cc.hooks.stop"}
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 -m comet_cc.hooks.pre_compact"}
+        ]
+      }
+    ]
+  }
+}
