@@ -22,7 +22,7 @@ from typing import Awaitable, Callable
 from loguru import logger
 
 from comet_cc import config
-from comet_cc.core import sensor as sensor_mod
+from comet_cc.core import retriever, sensor as sensor_mod
 from comet_cc.core import vector
 from comet_cc.core.compacter import compact as run_compacter
 from comet_cc.core.store import NodeStore
@@ -103,35 +103,119 @@ class TrimOrchestrator:
                 f"unabsorbed={len(unabsorbed)} total={len(l1)}"
             )
 
-        # Apply stored summary to this request, if we have one.
-        if not state.summary_user or not state.summary_asst:
+        mutated = False
+
+        # ---- 1. Apply stored summary, if any ----
+        if state.summary_user and state.summary_asst:
+            # Keep messages whose fp isn't in absorbed_fps. CC always ends
+            # a transcript with a user message on a new turn, so the tail
+            # is a valid continuation after our injected pair.
+            kept_idx = [
+                i for i, e in enumerate(l1)
+                if e.entities[0] not in state.absorbed_fps
+            ]
+            kept_msgs = [d["messages"][i] for i in kept_idx]
+            summary_block = (
+                "[PREVIOUS CONVERSATION SUMMARY — authoritative; the verbatim "
+                "turns were trimmed to save context]\n\n" + state.summary_user
+            )
+            d["messages"] = [
+                {"role": "user",
+                 "content": [{"type": "text", "text": summary_block}]},
+                {"role": "assistant",
+                 "content": [{"type": "text", "text": state.summary_asst}]},
+            ] + kept_msgs
+            logger.info(
+                f"trim[{sid[:8]}]: rewrote messages "
+                f"{len(l1)} -> {len(d['messages'])} "
+                f"(absorbed {len(state.absorbed_fps)})"
+            )
+            mutated = True
+
+        # ---- 2. Retrieval injection ----
+        # Prepend a `<system-reminder>`-style block to the last user message
+        # with passive nodes + vector-matched actives + session brief. This
+        # replaces the UserPromptSubmit hook's additionalContext path.
+        try:
+            retrieval_block = self._build_retrieval_block(sid, d)
+        except Exception as e:
+            logger.exception(f"retrieval failed for {sid[:8]}: {e}")
+            retrieval_block = ""
+        if retrieval_block:
+            self._inject_into_last_user(d, retrieval_block)
+            logger.info(
+                f"trim[{sid[:8]}]: injected retrieval "
+                f"({len(retrieval_block)} chars)"
+            )
+            mutated = True
+
+        if not mutated:
             return body
-
-        # Keep only messages whose fp isn't in absorbed_fps. CC always ends a
-        # transcript with a user message on a new turn, so the tail is a
-        # valid continuation after our injected pair.
-        kept_idx = [
-            i for i, e in enumerate(l1)
-            if e.entities[0] not in state.absorbed_fps
-        ]
-        kept_msgs = [d["messages"][i] for i in kept_idx]
-
-        summary_block = (
-            "[PREVIOUS CONVERSATION SUMMARY — authoritative; the verbatim "
-            "turns were trimmed to save context]\n\n" + state.summary_user
-        )
-        new_msgs = [
-            {"role": "user",
-             "content": [{"type": "text", "text": summary_block}]},
-            {"role": "assistant",
-             "content": [{"type": "text", "text": state.summary_asst}]},
-        ] + kept_msgs
-        d["messages"] = new_msgs
-        logger.info(
-            f"trim[{sid[:8]}]: rewrote messages "
-            f"{len(l1)} -> {len(new_msgs)} (absorbed {len(state.absorbed_fps)})"
-        )
         return json.dumps(d, ensure_ascii=False).encode("utf-8")
+
+    # ---------- retrieval helpers ----------
+
+    def _build_retrieval_block(self, session_id: str, body_json: dict) -> str:
+        # Query = text of the last user message (what the model is about to answer)
+        last_user_text = ""
+        for m in reversed(body_json.get("messages", [])):
+            if m.get("role") != "user":
+                continue
+            c = m.get("content")
+            if isinstance(c, str):
+                last_user_text = c
+            elif isinstance(c, list):
+                parts = [b.get("text", "") for b in c
+                         if isinstance(b, dict) and b.get("type") == "text"]
+                last_user_text = "\n".join(parts)
+            break
+        if not last_user_text.strip():
+            return ""
+
+        with self.store_lock:
+            nodes = retriever.get_context_window(
+                self.store, session_id=session_id,
+                query=last_user_text,
+                max_nodes=config.MAX_CONTEXT_NODES,
+                min_score=config.MIN_SIMILARITY,
+            )
+            brief = self.store.load_session_brief(session_id)
+
+        parts = []
+        brief_block = retriever.render_session_brief(brief)
+        if brief_block:
+            parts.append(brief_block)
+        node_block = retriever.render_nodes(nodes)
+        if node_block:
+            parts.append(node_block)
+        parts.append(retriever.render_memory_cli_footer())
+        body = "\n\n".join(parts).strip()
+        if not body:
+            return ""
+        return (
+            "<system-reminder>\n"
+            "Persistent memory context injected by CoMeT-CC "
+            "(cross-session + session brief):\n\n"
+            f"{body}\n"
+            "</system-reminder>"
+        )
+
+    @staticmethod
+    def _inject_into_last_user(body_json: dict, block: str) -> None:
+        msgs = body_json.get("messages", [])
+        for i in range(len(msgs) - 1, -1, -1):
+            m = msgs[i]
+            if m.get("role") != "user":
+                continue
+            c = m.get("content")
+            if isinstance(c, str):
+                m["content"] = [
+                    {"type": "text", "text": block},
+                    {"type": "text", "text": c},
+                ]
+            elif isinstance(c, list):
+                m["content"] = [{"type": "text", "text": block}, *c]
+            break
 
     # ---------- worker-path: slow, LLM subprocesses ----------
 
