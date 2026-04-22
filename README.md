@@ -159,3 +159,9 @@ aside from the forwarded-as-is HTTPS request to Anthropic.
 (see `tests/multiturn_live.py`). Long-term drift, large-context edge
 cases, and recovery after daemon restart (in-memory session state
 currently resets) are not yet broadly dogfooded.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, research,
+and nonprofit use; commercial use requires a separate license from the
+author.
