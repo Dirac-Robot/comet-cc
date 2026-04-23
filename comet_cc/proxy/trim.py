@@ -31,8 +31,71 @@ from comet_cc.policies import ALL_POLICIES
 from comet_cc.proxy.extractor import (
     extract_session_id, messages_to_l1, parse_messages_body,
 )
+from comet_cc.proxy.server import BlockedResponse
 from comet_cc.proxy.session import SessionRegistry, SessionState
 from comet_cc.schemas import L1Memory, MemoryNode
+
+
+# Signature phrases unique to CC's native compactor prompt. If any of these
+# are present, we assume CC is asking the model to /compact the session and
+# we short-circuit with an error — CoMeT-CC already manages summarization,
+# running CC's native compact on top would clobber our trim state.
+_COMPACT_PROMPT_MARKERS = (
+    "Your task is to create a detailed summary of this conversation",
+    "Your task is to create a detailed summary of the conversation so far",
+    "Your task is to create a detailed summary of the RECENT portion",
+)
+
+
+def _looks_like_native_compact(body_json: dict) -> bool:
+    # Scan the last user message (where CC puts compact instructions) and,
+    # for belt+suspenders, the system array.
+    msgs = body_json.get("messages") or []
+    for msg in reversed(msgs):
+        if msg.get("role") != "user":
+            continue
+        c = msg.get("content")
+        if isinstance(c, str):
+            text = c
+        elif isinstance(c, list):
+            text = " ".join(
+                b.get("text", "") for b in c
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        else:
+            text = ""
+        if any(m in text for m in _COMPACT_PROMPT_MARKERS):
+            return True
+        break
+    sysarr = body_json.get("system") or []
+    if isinstance(sysarr, list):
+        for blk in sysarr:
+            if isinstance(blk, dict) and any(
+                m in blk.get("text", "") for m in _COMPACT_PROMPT_MARKERS
+            ):
+                return True
+    return False
+
+
+_COMPACT_BLOCKED_MSG = (
+    "CoMeT-CC is managing this session's memory (see `comet-cc brief` / "
+    "`comet-cc list-session`) and has intercepted the /compact request. "
+    "The native compactor would clobber the plugin's trim state — keep "
+    "chatting and the proxy will summarize in the background. Disable "
+    "this guard by stopping the daemon (`comet-cc daemon stop`) if you "
+    "actually want CC's native compact instead."
+)
+
+
+def _compact_blocked_body() -> bytes:
+    payload = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": _COMPACT_BLOCKED_MSG,
+        },
+    }
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
 # Throttle: only consider enqueuing a sensor job once per this many seconds
@@ -67,12 +130,23 @@ class TrimOrchestrator:
 
     # ---------- request-path: fast, no LLM ----------
 
-    async def rewrite(self, method: str, path: str, body: bytes) -> bytes:
+    async def rewrite(self, method: str, path: str, body: bytes):
         if not path.startswith("/v1/messages") or not body:
             return body
         d = parse_messages_body(body)
         if d is None:
             return body
+
+        # CC's native /compact would summarize the conversation in a format
+        # that conflicts with our trim state. Refuse it at the proxy.
+        if _looks_like_native_compact(d):
+            sid_hint = extract_session_id(d) or "?"
+            logger.info(f"blocked native /compact for session={sid_hint[:8]}")
+            return BlockedResponse(
+                status=400, body=_compact_blocked_body(),
+                content_type="application/json",
+            )
+
         sid = extract_session_id(d)
         if not sid:
             return body

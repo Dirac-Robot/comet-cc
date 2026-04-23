@@ -151,6 +151,16 @@ turns at any turn, and CC's native compactor effectively never has to
 run (the upstream model only ever sees the compacted view). The hook
 version is archived on the `hook-arch-archive` branch.
 
+### /compact is intercepted
+
+Because the proxy already manages summarization, the plugin disables
+CC's native `/compact` command: any request matching the native
+compactor's prompt signature gets short-circuited with a 400 error and
+an explanatory message. This keeps the two summarizers from clobbering
+each other's state. If you truly want CC's native compactor, stop the
+daemon (`comet-cc daemon stop`) — the proxy is gone, CC talks directly
+to Anthropic, and `/compact` works as usual.
+
 ## Configuration
 
 | Env var                       | Default          | Role                                        |

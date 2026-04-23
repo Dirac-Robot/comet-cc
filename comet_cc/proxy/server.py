@@ -18,9 +18,19 @@ from comet_cc import config
 from comet_cc.proxy import cert
 
 
-# Hook signature: takes (method, path, body) -> possibly-modified body bytes.
-# Daemon installs its trim orchestrator here on boot.
-RewriteFn = Callable[[str, str, bytes], Awaitable[bytes]]
+# Hook signature: takes (method, path, body) -> possibly-modified body bytes
+# or a BlockedResponse if the proxy should short-circuit the upstream call.
+RewriteFn = Callable[[str, str, bytes], Awaitable["bytes | BlockedResponse"]]
+
+
+class BlockedResponse:
+    """Sentinel rewrite hooks can return to replace an upstream call with
+    a canned error/body (e.g., to disable CC's native /compact)."""
+    def __init__(self, status: int, body: bytes,
+                 content_type: str = "application/json") -> None:
+        self.status = status
+        self.body = body
+        self.content_type = content_type
 
 
 async def _passthrough(method: str, path: str, body: bytes) -> bytes:
@@ -57,6 +67,15 @@ class ProxyServer:
         except Exception as e:
             logger.exception(f"rewrite hook crashed: {e}")
             new_body = body
+        if isinstance(new_body, BlockedResponse):
+            logger.info(
+                f"block: {req.method} {req.path} -> "
+                f"status={new_body.status} len={len(new_body.body)}"
+            )
+            return web.Response(
+                status=new_body.status, body=new_body.body,
+                headers={"content-type": new_body.content_type},
+            )
         mutated = new_body is not body and new_body != body
         if mutated:
             logger.info(
