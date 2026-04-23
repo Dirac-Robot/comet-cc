@@ -76,3 +76,18 @@ def proxy_log() -> Path:
 PROXY_HOST = os.environ.get("COMET_CC_PROXY_HOST", "127.0.0.1")
 PROXY_PORT = int(os.environ.get("COMET_CC_PROXY_PORT", "8443"))
 UPSTREAM_URL = os.environ.get("COMET_CC_UPSTREAM", "https://api.anthropic.com")
+
+
+# Retrieval is session-scoped by default — CoMeT-CC doesn't support session
+# handoff, so leaking another session's memory would be surprising. Flip
+# `COMET_CC_CROSS_SESSION=1` to get global retrieval across all sessions
+# (useful if you care about passive/rule nodes transcending /compact,
+# /clear, or --resume boundaries).
+def _env_flag(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+CROSS_SESSION_RETRIEVAL = _env_flag("COMET_CC_CROSS_SESSION", default=False)

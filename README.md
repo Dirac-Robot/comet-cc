@@ -164,6 +164,7 @@ version is archived on the `hook-arch-archive` branch.
 | `COMET_CC_LOAD_THRESHOLD`     | `4`              | Sensor load (1–5) that trips compaction     |
 | `COMET_CC_MAX_CONTEXT_NODES`  | `8`              | Retrieval cap injected per turn             |
 | `COMET_CC_MIN_SIM`            | `0.30`           | Cosine floor for active-node matching       |
+| `COMET_CC_CROSS_SESSION`      | `0`              | `1` to retrieve nodes across all sessions (default: scope to current session) |
 
 ## Troubleshooting
 

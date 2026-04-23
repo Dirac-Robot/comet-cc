@@ -91,35 +91,49 @@ class NodeStore:
             ).fetchone()
         return _row_to_node(row) if row else None
 
-    def list_passive(self, session_id: str | None = None) -> list[MemoryNode]:
-        """Passive + both nodes — always injected into context.
-
-        Passive nodes represent permanent user preferences / constraints —
-        they must transcend session boundaries. The `session_id` parameter
-        is accepted for symmetry with list_active_with_embeddings but is
-        intentionally ignored for passive/both retrieval.
-        """
+    def list_passive(
+        self, session_id: str | None = None, *, cross_session: bool = False,
+    ) -> list[MemoryNode]:
+        """Passive + both nodes. When `session_id` is given and
+        `cross_session=False`, results are scoped to that session — no
+        handoff leakage. Pass `cross_session=True` (or `session_id=None`)
+        for global retrieval across all sessions."""
         with self._lock:
-            rows = self._conn.execute(
-                f"SELECT {_COLUMNS} FROM nodes "
-                "WHERE recall_mode IN ('passive', 'both') "
-                "ORDER BY created_at DESC"
-            ).fetchall()
+            if session_id and not cross_session:
+                rows = self._conn.execute(
+                    f"SELECT {_COLUMNS} FROM nodes "
+                    "WHERE recall_mode IN ('passive', 'both') "
+                    "  AND session_id = ? "
+                    "ORDER BY created_at DESC",
+                    (session_id,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT {_COLUMNS} FROM nodes "
+                    "WHERE recall_mode IN ('passive', 'both') "
+                    "ORDER BY created_at DESC"
+                ).fetchall()
         return [_row_to_node(r) for r in rows]
 
     def list_active_with_embeddings(
-        self, session_id: str | None = None,
+        self, session_id: str | None = None, *, cross_session: bool = False,
     ) -> list[tuple[MemoryNode, np.ndarray]]:
-        """Active + both nodes with embeddings. `session_id` is accepted for
-        symmetry but active recall is global — CC rotates session_ids on
-        /compact, /clear, resume, so session-scoped active would lose
-        semantically relevant matches across those boundaries."""
+        """Active + both nodes with embeddings. Scoping matches list_passive."""
         with self._lock:
-            rows = self._conn.execute(
-                f"SELECT {_COLUMNS} FROM nodes "
-                "WHERE recall_mode IN ('active', 'both') "
-                "  AND embedding IS NOT NULL"
-            ).fetchall()
+            if session_id and not cross_session:
+                rows = self._conn.execute(
+                    f"SELECT {_COLUMNS} FROM nodes "
+                    "WHERE recall_mode IN ('active', 'both') "
+                    "  AND embedding IS NOT NULL "
+                    "  AND session_id = ?",
+                    (session_id,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT {_COLUMNS} FROM nodes "
+                    "WHERE recall_mode IN ('active', 'both') "
+                    "  AND embedding IS NOT NULL"
+                ).fetchall()
         out = []
         for row in rows:
             node = _row_to_node(row)

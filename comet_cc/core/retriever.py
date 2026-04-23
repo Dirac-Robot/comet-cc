@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from comet_cc import config
 from comet_cc.core import vector
 from comet_cc.core.store import NodeStore
 from comet_cc.schemas import MemoryNode
@@ -22,10 +23,12 @@ def get_context_window(
 ) -> list[MemoryNode]:
     """Passive/both first, then active by vector match against `query`.
 
-    Passive nodes enforce priority over recency — a rule-heavy workflow
-    shouldn't lose permanent constraints to a recent exploratory episode.
+    Scoped to `session_id` unless `COMET_CC_CROSS_SESSION=1` is set.
+    CoMeT-CC doesn't support session handoff; leaking another session's
+    memory would be surprising, so session-scoped is the default.
     """
-    passives = store.list_passive(session_id=session_id)
+    cross = config.CROSS_SESSION_RETRIEVAL
+    passives = store.list_passive(session_id=session_id, cross_session=cross)
     if len(passives) >= max_nodes:
         return passives[:max_nodes]
 
@@ -34,7 +37,9 @@ def get_context_window(
 
     actives: list[MemoryNode] = []
     if query:
-        candidates = store.list_active_with_embeddings(session_id=session_id)
+        candidates = store.list_active_with_embeddings(
+            session_id=session_id, cross_session=cross,
+        )
         candidates = [(n, e) for n, e in candidates if n.node_id not in passive_ids]
         if candidates:
             q_vec = vector.embed(query)
@@ -43,7 +48,9 @@ def get_context_window(
             by_id = {n.node_id: n for n, _ in candidates}
             actives = [by_id[nid] for nid, _ in ranked]
     else:
-        candidates = store.list_active_with_embeddings(session_id=session_id)
+        candidates = store.list_active_with_embeddings(
+            session_id=session_id, cross_session=cross,
+        )
         candidates_sorted = sorted(candidates, key=lambda ne: ne[0].created_at, reverse=True)
         actives = [n for n, _ in candidates_sorted
                    if n.node_id not in passive_ids][:remaining]
