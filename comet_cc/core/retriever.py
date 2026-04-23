@@ -59,20 +59,17 @@ def get_context_window(
 
 
 def render_nodes(nodes: list[MemoryNode]) -> str:
-    """Render nodes as an injectable context block. Passive before active."""
+    """Render nodes in CoMeT's canonical single-line form:
+        [node_id] (IMPORTANCE) summary | trigger
+    Passive ordered before active (passive always rides; active is ranked)."""
     if not nodes:
         return ""
     lines = ["## Retrieved Memory"]
     for n in nodes:
-        tag_str = ", ".join(t for t in n.topic_tags if not t.startswith("IMPORTANCE:"))
-        head = f"[{n.node_id}] ({n.recall_mode}, imp={n.importance}"
-        if tag_str:
-            head += f", tags={tag_str}"
-        head += ")"
-        lines.append(f"- {head}")
-        lines.append(f"  summary: {n.summary}")
+        line = f"[{n.node_id}] ({n.importance}) {n.summary}"
         if n.trigger:
-            lines.append(f"  trigger: {n.trigger}")
+            line += f" | {n.trigger}"
+        lines.append(line)
     return "\n".join(lines)
 
 
