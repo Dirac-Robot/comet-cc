@@ -214,9 +214,18 @@ def cmd_read_node(args) -> None:
             print(f"\n[{pos}] {role}:")
             print(text)
 
+    if args.links:
+        linked = client.list_linked_nodes(args.node_id)
+        nodes = (linked or {}).get("nodes") or []
+        print(f"\n# Linked children ({len(nodes)})")
+        if not nodes:
+            print("(none)")
+        for n in nodes:
+            print(_format_node(n, full=False))
+
 
 def cmd_list_session(args) -> None:
-    resp = client.list_session_nodes(args.session)
+    resp = client.list_session_nodes(args.session, include_children=args.all)
     if not resp or not resp.get("ok"):
         print("daemon not reachable — start it with `comet-cc daemon start`")
         sys.exit(2)
@@ -224,7 +233,8 @@ def cmd_list_session(args) -> None:
     if not nodes:
         print("(no nodes for this session)")
         return
-    print(f"# Session {args.session} — {len(nodes)} nodes")
+    scope = " (including children)" if args.all else ""
+    print(f"# Session {args.session} — {len(nodes)} nodes{scope}")
     for n in nodes:
         print(_format_node(n))
 
@@ -271,9 +281,13 @@ def main() -> None:
     rn.add_argument("--session", default=None)
     rn.add_argument("--depth", type=int, default=0, choices=[0, 1, 2],
                     help="0 summary (default), 1 detailed summary, 2 raw turn data")
+    rn.add_argument("--links", action="store_true",
+                    help="Also list child nodes linked to this node")
 
-    ls = sub.add_parser("list-session", help="List all nodes in a session")
+    ls = sub.add_parser("list-session", help="List all nodes in a session (parents only by default)")
     ls.add_argument("session")
+    ls.add_argument("--all", action="store_true",
+                    help="Include child nodes (drill-down leaves) in the listing")
 
     b = sub.add_parser("brief", help="Show this session's rolling brief")
     b.add_argument("session")

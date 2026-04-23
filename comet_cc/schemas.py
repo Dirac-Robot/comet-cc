@@ -25,6 +25,10 @@ class MemoryNode:
     detailed_summary: str | None = None
     content_key: str = ""
     raw_location: str = ""
+    # Hierarchical links. `parent_node_id` means "I'm a child, hide me from
+    # default retrieval"; `links` is the outgoing edge list a parent node
+    # carries to its children (or any peer cross-reference).
+    parent_node_id: str | None = None
     links: list[str] = field(default_factory=list)
     source_links: list[str] = field(default_factory=list)
     capsule: str = ""

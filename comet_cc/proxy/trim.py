@@ -29,7 +29,7 @@ from comet_cc.core.store import NodeStore
 from comet_cc.parser import LogicalNode, choose_policy_for_bundle
 from comet_cc.policies import ALL_POLICIES
 from comet_cc.proxy.extractor import (
-    extract_session_id, messages_to_l1, parse_messages_body,
+    bundle_l1, extract_session_id, messages_to_l1, parse_messages_body,
 )
 from comet_cc.proxy.server import BlockedResponse
 from comet_cc.proxy.session import SessionRegistry, SessionState
@@ -153,12 +153,25 @@ class TrimOrchestrator:
 
         state = self.registry.get_or_create(sid)
         l1 = messages_to_l1(d)
-        unabsorbed = [e for e in l1 if e.entities[0] not in state.absorbed_fps]
+
+        # Per-message absorption lookup (rewrite still acts on raw messages
+        # to keep alternation intact with CC's original array).
+        unabsorbed_indices = [
+            i for i, e in enumerate(l1)
+            if e.entities[0] not in state.absorbed_fps
+        ]
+
+        # Bundled view for sensor/compacter: tool_use + tool_result chains
+        # collapse into a single logical L1 entry so a 5-step tool run
+        # doesn't look like 10 turn-flow breaks to the sensor.
+        msgs = d.get("messages") or []
+        unabsorbed_msgs = [msgs[i] for i in unabsorbed_indices]
+        bundled = bundle_l1({"messages": unabsorbed_msgs})
 
         # Throttled sensor dispatch — don't hammer the worker.
         now = time.monotonic()
         ready = (
-            len(unabsorbed) >= config.MIN_L1_BUFFER
+            len(bundled) >= config.MIN_L1_BUFFER
             and not state.compact_in_flight
             and (now - state.last_sensor_check) >= SENSOR_THROTTLE_SEC
         )
@@ -167,14 +180,15 @@ class TrimOrchestrator:
             self.jobs.put({
                 "kind": "sensor_check",
                 "session_id": sid,
-                # Snapshot of buffer fps + raw contents for the worker
-                "buffer": [(e.entities[0], e.content, e.raw_content)
-                           for e in unabsorbed],
-                "all_fps": [e.entities[0] for e in l1],
+                # Bundled buffer. Each entry's `fps` is a list — a bundle
+                # carries every underlying message's fingerprint so the
+                # post-compact absorption step can mask them all.
+                "buffer": [(list(e.entities), e.content, e.raw_content)
+                           for e in bundled],
             })
             logger.info(
                 f"trim[{sid[:8]}]: queued sensor_check "
-                f"unabsorbed={len(unabsorbed)} total={len(l1)}"
+                f"bundled={len(bundled)} unabsorbed_msgs={len(unabsorbed_msgs)} total_msgs={len(l1)}"
             )
 
         mutated = False
@@ -310,14 +324,15 @@ class TrimOrchestrator:
 
     def _do_sensor_check(self, job: dict) -> None:
         sid: str = job["session_id"]
-        buf_raw: list[tuple[str, str, str]] = job["buffer"]
+        # Each tuple is (fps_list, content_preview, raw_content). fps_list
+        # has N entries for an N-message bundle, 1 entry for plain turns.
+        buf_raw: list[tuple[list[str], str, str]] = job["buffer"]
         if len(buf_raw) < config.MIN_L1_BUFFER:
             return
 
-        # Rebuild L1Memory list (we stripped dataclass in queue payload).
         buffer = [
-            L1Memory(content=c, raw_content=rc, entities=[fp])
-            for fp, c, rc in buf_raw
+            L1Memory(content=c, raw_content=rc, entities=list(fps))
+            for fps, c, rc in buf_raw
         ]
 
         self.registry.mark_compact_start(sid)
@@ -377,15 +392,22 @@ class TrimOrchestrator:
                 if brief and brief.strip():
                     self.store.save_session_brief(sid, brief.strip())
 
+            # Flatten bundle fingerprints — each underlying message must
+            # be marked absorbed individually so the rewrite path can mask
+            # them out one by one.
+            absorbed = set()
+            for fps, _, _ in buf_raw:
+                absorbed.update(fps)
             self.registry.mark_compact_done(
                 session_id=sid,
-                absorbed_fps={fp for fp, _, _ in buf_raw},
+                absorbed_fps=absorbed,
                 summary_user=node.summary,
                 summary_asst=_synth_ack(node.summary),
             )
             logger.info(
                 f"compact[{sid[:8]}] saved node={node.node_id} "
-                f"imp={node.importance} absorbed={len(buf_raw)} turns"
+                f"imp={node.importance} bundled={len(buf_raw)} "
+                f"absorbed_msgs={len(absorbed)}"
             )
         finally:
             # Ensures compact_in_flight flips back even if we returned early.

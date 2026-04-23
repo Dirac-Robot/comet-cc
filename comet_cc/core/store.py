@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS nodes (
     compaction_reason TEXT,
     created_at REAL NOT NULL,
     embedding BLOB,
-    detailed_summary TEXT
+    detailed_summary TEXT,
+    parent_node_id TEXT,
+    links TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_session ON nodes(session_id);
 CREATE INDEX IF NOT EXISTS idx_recall ON nodes(recall_mode);
@@ -58,7 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_rawturns_node ON raw_turns(node_id);
 _COLUMNS = (
     "node_id, summary, trigger, recall_mode, importance, topic_tags, "
     "session_id, depth_level, compaction_reason, created_at, embedding, "
-    "detailed_summary"
+    "detailed_summary, parent_node_id, links"
 )
 
 
@@ -76,20 +78,35 @@ class NodeStore:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.executescript(_SCHEMA)
-        # Forward migration for stores created before detailed_summary /
-        # raw_turns existed. Idempotent — sqlite raises if column exists.
+        # Forward migration for stores created before newer columns existed.
+        # Idempotent — sqlite raises if column exists.
+        for col_ddl in (
+            "ADD COLUMN detailed_summary TEXT",
+            "ADD COLUMN parent_node_id TEXT",
+            "ADD COLUMN links TEXT",
+        ):
+            try:
+                self._conn.execute(f"ALTER TABLE nodes {col_ddl}")
+            except sqlite3.OperationalError:
+                pass
+        # Index on parent_node_id — defer until column definitely exists
+        # (can't live inside _SCHEMA because for old DBs the column only
+        # arrives via the ALTER above).
         try:
-            self._conn.execute("ALTER TABLE nodes ADD COLUMN detailed_summary TEXT")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_parent ON nodes(parent_node_id)"
+            )
         except sqlite3.OperationalError:
             pass
         self._conn.commit()
 
     def save_node(self, node: MemoryNode, embedding: np.ndarray | None = None) -> None:
         blob = embedding.astype(np.float32).tobytes() if embedding is not None else None
+        links_json = json.dumps(node.links) if node.links else None
         with self._lock:
             self._conn.execute(
                 f"INSERT OR REPLACE INTO nodes ({_COLUMNS}) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     node.node_id, node.summary, node.trigger,
                     node.recall_mode, node.importance,
@@ -97,6 +114,7 @@ class NodeStore:
                     node.session_id, node.depth_level,
                     node.compaction_reason, node.created_at,
                     blob, node.detailed_summary,
+                    node.parent_node_id, links_json,
                 ),
             )
             for tag in node.topic_tags:
@@ -151,12 +169,17 @@ class NodeStore:
         """Passive + both nodes. When `session_id` is given and
         `cross_session=False`, results are scoped to that session — no
         handoff leakage. Pass `cross_session=True` (or `session_id=None`)
-        for global retrieval across all sessions."""
+        for global retrieval across all sessions.
+
+        Child nodes (parent_node_id IS NOT NULL) are excluded — they're
+        drill-down details accessed via `list_linked_nodes(parent)`, not
+        surfaced in the default memory map."""
         with self._lock:
             if session_id and not cross_session:
                 rows = self._conn.execute(
                     f"SELECT {_COLUMNS} FROM nodes "
                     "WHERE recall_mode IN ('passive', 'both') "
+                    "  AND parent_node_id IS NULL "
                     "  AND session_id = ? "
                     "ORDER BY created_at DESC",
                     (session_id,),
@@ -165,6 +188,7 @@ class NodeStore:
                 rows = self._conn.execute(
                     f"SELECT {_COLUMNS} FROM nodes "
                     "WHERE recall_mode IN ('passive', 'both') "
+                    "  AND parent_node_id IS NULL "
                     "ORDER BY created_at DESC"
                 ).fetchall()
         return [_row_to_node(r) for r in rows]
@@ -172,13 +196,15 @@ class NodeStore:
     def list_active_with_embeddings(
         self, session_id: str | None = None, *, cross_session: bool = False,
     ) -> list[tuple[MemoryNode, np.ndarray]]:
-        """Active + both nodes with embeddings. Scoping matches list_passive."""
+        """Active + both nodes with embeddings. Scoping matches list_passive.
+        Children hidden from the default set like list_passive."""
         with self._lock:
             if session_id and not cross_session:
                 rows = self._conn.execute(
                     f"SELECT {_COLUMNS} FROM nodes "
                     "WHERE recall_mode IN ('active', 'both') "
                     "  AND embedding IS NOT NULL "
+                    "  AND parent_node_id IS NULL "
                     "  AND session_id = ?",
                     (session_id,),
                 ).fetchall()
@@ -186,7 +212,8 @@ class NodeStore:
                 rows = self._conn.execute(
                     f"SELECT {_COLUMNS} FROM nodes "
                     "WHERE recall_mode IN ('active', 'both') "
-                    "  AND embedding IS NOT NULL"
+                    "  AND embedding IS NOT NULL "
+                    "  AND parent_node_id IS NULL"
                 ).fetchall()
         out = []
         for row in rows:
@@ -195,6 +222,17 @@ class NodeStore:
             if emb is not None:
                 out.append((node, emb))
         return out
+
+    def list_linked_nodes(self, parent_id: str) -> list[MemoryNode]:
+        """All nodes that name `parent_id` as their parent, in creation order.
+        Used by `read-node --links` and the bundle drill-down path."""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {_COLUMNS} FROM nodes "
+                "WHERE parent_node_id = ? ORDER BY created_at",
+                (parent_id,),
+            ).fetchall()
+        return [_row_to_node(r) for r in rows]
 
     def get_all_tags(self) -> set[str]:
         with self._lock:
@@ -218,13 +256,26 @@ class NodeStore:
             ).fetchone()
         return row[0] if row else ""
 
-    def list_session_nodes(self, session_id: str) -> list[MemoryNode]:
+    def list_session_nodes(
+        self, session_id: str, *, include_children: bool = False,
+    ) -> list[MemoryNode]:
+        """Session timeline. By default hides child nodes; pass
+        `include_children=True` to see every row including drill-down
+        leaves (useful for audits / `comet-cc list-session --all`)."""
         with self._lock:
-            rows = self._conn.execute(
-                f"SELECT {_COLUMNS} FROM nodes WHERE session_id = ? "
-                "ORDER BY created_at ASC",
-                (session_id,),
-            ).fetchall()
+            if include_children:
+                rows = self._conn.execute(
+                    f"SELECT {_COLUMNS} FROM nodes WHERE session_id = ? "
+                    "ORDER BY created_at ASC",
+                    (session_id,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT {_COLUMNS} FROM nodes WHERE session_id = ? "
+                    "  AND parent_node_id IS NULL "
+                    "ORDER BY created_at ASC",
+                    (session_id,),
+                ).fetchall()
         return [_row_to_node(r) for r in rows]
 
     def delete(self, node_id: str) -> None:
@@ -237,6 +288,7 @@ class NodeStore:
 
 
 def _row_to_node(row) -> MemoryNode:
+    links_raw = row[13] if len(row) > 13 else None
     return MemoryNode(
         node_id=row[0], summary=row[1], trigger=row[2],
         recall_mode=row[3], importance=row[4],
@@ -247,4 +299,6 @@ def _row_to_node(row) -> MemoryNode:
         created_at=row[9],
         # row[10] = embedding (opaque blob, handled elsewhere)
         detailed_summary=row[11] if len(row) > 11 else None,
+        parent_node_id=row[12] if len(row) > 12 else None,
+        links=json.loads(links_raw) if links_raw else [],
     )

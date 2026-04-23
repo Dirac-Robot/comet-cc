@@ -172,8 +172,17 @@ class Daemon:
 
     def _m_list_session_nodes(self, p: dict) -> dict:
         sid = p["session_id"]
+        include_children = bool(p.get("include_children", False))
         with self._store_lock:
-            nodes = self.store.list_session_nodes(sid)
+            nodes = self.store.list_session_nodes(
+                sid, include_children=include_children,
+            )
+        return {"ok": True, "nodes": [_node_to_dict(n) for n in nodes]}
+
+    def _m_list_linked_nodes(self, p: dict) -> dict:
+        parent_id = p["parent_id"]
+        with self._store_lock:
+            nodes = self.store.list_linked_nodes(parent_id)
         return {"ok": True, "nodes": [_node_to_dict(n) for n in nodes]}
 
     def _m_list_passive(self, p: dict) -> dict:

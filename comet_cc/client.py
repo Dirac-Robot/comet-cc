@@ -71,8 +71,14 @@ def read_memory(node_id: str, depth: int = 0, timeout: float = 120.0) -> dict | 
     return _rpc("read_memory", timeout, node_id=node_id, depth=depth)
 
 
-def list_session_nodes(session_id: str, timeout: float = 5.0) -> dict | None:
-    return _rpc("list_session_nodes", timeout, session_id=session_id)
+def list_session_nodes(session_id: str, include_children: bool = False,
+                       timeout: float = 5.0) -> dict | None:
+    return _rpc("list_session_nodes", timeout,
+                session_id=session_id, include_children=include_children)
+
+
+def list_linked_nodes(parent_id: str, timeout: float = 5.0) -> dict | None:
+    return _rpc("list_linked_nodes", timeout, parent_id=parent_id)
 
 
 def list_passive(session_id: str | None, timeout: float = 5.0) -> dict | None:
