@@ -7,18 +7,38 @@ summary), and forwarded to Anthropic. Drives summarization with `claude -p`
 subprocesses so there are no external API keys to manage.
 
 > **Built on [CoMeT](https://github.com/Dirac-Robot/CoMeTPro)** — the
-> Cognitive Memory Tree system. CoMeT is a lossless structured memory
-> substrate for LLM agents: a dual-speed sensor + compacter pipeline lands
-> conversation, tool output, and documents as `MemoryNode`s (summary +
-> trigger + lazy-detail + full raw), with 3-tier progressive retrieval,
-> cross-session consolidation, synthesized knowledge hubs, and snapshot
-> protection. CoMeT-CC ports the core pipeline (sensor, compacter,
-> 3-tier storage, tool-bundle synthesis, node linking) down to a
-> single-session scope for the Claude Code plugin setting, dropping the
-> cross-session consolidation and graph-traversal stages. If your use
-> case outgrows CC or needs multi-agent handoff, go to the full
-> [CoMeT](https://github.com/Dirac-Robot/CoMeTPro) (or
-> [CoBrA](https://github.com/Dirac-Robot/CoBrA) which sits on top of it).
+> Cognitive Memory Tree system. A few things CoMeT brings to the table
+> that CoMeT-CC inherits directly:
+>
+> - **Effectively infinite context window.** Agents read at the
+>   *shallowest* tier that answers the question — summary (T1) by
+>   default, detailed summary (T2) when specifics matter, raw (T3)
+>   only when verbatim is required. Conversation length stops being a
+>   token-cost problem; what matters is what you actually drill into.
+> - **Lossless structured memory.** Summaries *index*, raw is
+>   *preserved*. Compact isn't a one-way compression — every compacted
+>   node links back to the exact turns it absorbed.
+> - **Dual-speed sensor + compacter pipeline.** Cheap SLM sensor gates
+>   every turn for topic shift / cognitive load / redundancy; expensive
+>   compacter only runs when a gate trips. Per-turn overhead stays low
+>   even as context grows.
+> - **Hierarchical tool-bundle synthesis.** A turn with N tool calls
+>   becomes ONE bundle-parent node (visible in the memory map) plus N
+>   linked child nodes (drill-down). Tool noise never fragments the
+>   dialog layer.
+> - **Node-graph retrieval.** Memory is a linked graph, not a flat set.
+>   Retrieval can walk `links` and `parent_node_id` edges for 2-hop
+>   context that flat vector search would miss.
+>
+> CoMeT-CC ports sensor, compacter, 3-tier storage, tool-bundle
+> synthesis, and node linking down to a single-session scope suitable
+> for a Claude Code plugin. What it *doesn't* carry from the full
+> CoMeT: cross-session consolidation, graph-based dedup/link
+> normalization, multi-modality pipelines (external content, file
+> embedding), and session handoff. If your use case needs any of
+> those, go to the full [CoMeT](https://github.com/Dirac-Robot/CoMeTPro)
+> or [CoBrA](https://github.com/Dirac-Robot/CoBrA) (which sits on top
+> of CoMeT).
 
 ## What it does
 
