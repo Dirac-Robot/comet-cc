@@ -127,6 +127,49 @@ class Daemon:
             return {"ok": False, "error": "not found"}
         return {"ok": True, "node": _node_to_dict(node)}
 
+    def _m_read_memory(self, p: dict) -> dict:
+        """Tiered read: depth 0 = summary, 1 = detailed (lazy), 2 = raw turns."""
+        nid = p["node_id"]
+        depth = int(p.get("depth", 0))
+        with self._store_lock:
+            node = self.store.get_node(nid)
+        if node is None:
+            return {"ok": False, "error": "not found"}
+
+        if depth == 0:
+            text = (f"{node.summary} | {node.trigger}"
+                    if node.trigger else node.summary)
+            return {"ok": True, "depth": 0, "text": text,
+                    "node": _node_to_dict(node)}
+
+        if depth == 2:
+            with self._store_lock:
+                turns = self.store.get_raw_turns(nid)
+            return {"ok": True, "depth": 2, "turns": turns,
+                    "node": _node_to_dict(node)}
+
+        # depth == 1: detailed_summary, lazy-generated + cached
+        if node.detailed_summary:
+            return {"ok": True, "depth": 1, "text": node.detailed_summary,
+                    "cached": True, "node": _node_to_dict(node)}
+        with self._store_lock:
+            turns = self.store.get_raw_turns(nid)
+        if not turns:
+            return {"ok": True, "depth": 1, "text": node.summary,
+                    "cached": False, "node": _node_to_dict(node),
+                    "note": "no raw turns to expand from; fell back to summary"}
+        raw_text = "\n\n".join(f"[{role}] {text}" for _, role, text in turns)
+        from comet_cc.core.detail import generate_detailed_summary
+        detailed = generate_detailed_summary(raw_text)
+        if not detailed:
+            return {"ok": True, "depth": 1, "text": node.summary,
+                    "cached": False, "node": _node_to_dict(node),
+                    "note": "detail generator returned empty; fell back to summary"}
+        with self._store_lock:
+            self.store.update_detailed_summary(nid, detailed)
+        return {"ok": True, "depth": 1, "text": detailed, "cached": False,
+                "node": _node_to_dict(node)}
+
     def _m_list_session_nodes(self, p: dict) -> dict:
         sid = p["session_id"]
         with self._store_lock:

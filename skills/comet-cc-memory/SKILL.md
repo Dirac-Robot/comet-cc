@@ -44,15 +44,28 @@ Scope to the current session with `--session <id>` when cross-session
 matches would just be noise (id appears in some transcript
 headers; if you don't know it, omit the flag).
 
-### Read a specific node in full
+### Read a specific node at one of three depths
 
 ```bash
-comet-cc read-node <node_id>
+comet-cc read-node <node_id>              # depth 0: summary only (cheapest)
+comet-cc read-node <node_id> --depth 1    # detailed summary (LLM-generated on first call, cached)
+comet-cc read-node <node_id> --depth 2    # raw turn data (exact verbatim text, no LLM)
 ```
 
-Shows the node's full summary, trigger, tags, importance, recall mode,
-and why it was compacted (topic_shift / high_load / buffer_overflow).
-Use this after `search` surfaces a promising `[n_…]` id.
+Pick the lowest depth that answers the question:
+
+- **depth 0** is what retrieval already gave you (summary | trigger);
+  re-reading it is free.
+- **depth 1** when the summary glosses over specifics you need — numbers,
+  names, decisions. First call runs a haiku LLM over the stored raw
+  turns (~2-5s); subsequent calls return cached.
+- **depth 2** when you need the exact words that were said — e.g., user's
+  literal instruction, exact error message, exact code snippet. No LLM
+  involved; dumps verbatim absorbed turns in order.
+
+Escalate only as far as you need. Starting at depth 2 for a factual
+question wastes tokens; staying at depth 0 when the user asked "what
+exactly did I say" gives a paraphrase that misses the point.
 
 ### List every node in the current session
 

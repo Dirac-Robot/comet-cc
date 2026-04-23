@@ -361,8 +361,19 @@ class TrimOrchestrator:
 
             node, brief = result
             emb = vector.embed(f"{node.summary}\n{node.trigger}")
+            # Derive tier-3 turns from the buffer. content starts with
+            # "[role] ..." (see extractor._text_of); split once to recover
+            # the role for each absorbed turn.
+            tier3: list[tuple[str, str]] = []
+            for mem in buffer:
+                role = "user"
+                if mem.content.startswith("[") and "] " in mem.content:
+                    role = mem.content.split("] ", 1)[0].lstrip("[")
+                tier3.append((role, mem.raw_content))
             with self.store_lock:
                 self.store.save_node(node, embedding=emb)
+                if tier3:
+                    self.store.save_raw_turns(node.node_id, tier3)
                 if brief and brief.strip():
                     self.store.save_session_brief(sid, brief.strip())
 

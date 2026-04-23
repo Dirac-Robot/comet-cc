@@ -66,6 +66,11 @@ def get_node(node_id: str, timeout: float = 5.0) -> dict | None:
     return _rpc("get_node", timeout, node_id=node_id)
 
 
+def read_memory(node_id: str, depth: int = 0, timeout: float = 120.0) -> dict | None:
+    """Tiered read. depth 1 may block up to ~60s on LLM cold path."""
+    return _rpc("read_memory", timeout, node_id=node_id, depth=depth)
+
+
 def list_session_nodes(session_id: str, timeout: float = 5.0) -> dict | None:
     return _rpc("list_session_nodes", timeout, session_id=session_id)
 

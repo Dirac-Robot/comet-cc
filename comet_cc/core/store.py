@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     depth_level INTEGER DEFAULT 1,
     compaction_reason TEXT,
     created_at REAL NOT NULL,
-    embedding BLOB
+    embedding BLOB,
+    detailed_summary TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_session ON nodes(session_id);
 CREATE INDEX IF NOT EXISTS idx_recall ON nodes(recall_mode);
@@ -39,11 +40,25 @@ CREATE TABLE IF NOT EXISTS session_briefs (
 CREATE TABLE IF NOT EXISTS all_tags (
     tag TEXT PRIMARY KEY
 );
+
+-- Tier-3 storage: verbatim turns absorbed into each node. Written at
+-- compact time, read on `read-node --depth 2`. FK-less cascade because
+-- sqlite's FK enforcement is off by default — purge happens via
+-- delete_raw_turns() if a node is removed.
+CREATE TABLE IF NOT EXISTS raw_turns (
+    node_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY (node_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_rawturns_node ON raw_turns(node_id);
 """
 
 _COLUMNS = (
     "node_id, summary, trigger, recall_mode, importance, topic_tags, "
-    "session_id, depth_level, compaction_reason, created_at, embedding"
+    "session_id, depth_level, compaction_reason, created_at, embedding, "
+    "detailed_summary"
 )
 
 
@@ -61,6 +76,12 @@ class NodeStore:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.executescript(_SCHEMA)
+        # Forward migration for stores created before detailed_summary /
+        # raw_turns existed. Idempotent — sqlite raises if column exists.
+        try:
+            self._conn.execute("ALTER TABLE nodes ADD COLUMN detailed_summary TEXT")
+        except sqlite3.OperationalError:
+            pass
         self._conn.commit()
 
     def save_node(self, node: MemoryNode, embedding: np.ndarray | None = None) -> None:
@@ -68,20 +89,53 @@ class NodeStore:
         with self._lock:
             self._conn.execute(
                 f"INSERT OR REPLACE INTO nodes ({_COLUMNS}) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     node.node_id, node.summary, node.trigger,
                     node.recall_mode, node.importance,
                     json.dumps(node.topic_tags),
                     node.session_id, node.depth_level,
                     node.compaction_reason, node.created_at,
-                    blob,
+                    blob, node.detailed_summary,
                 ),
             )
             for tag in node.topic_tags:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO all_tags (tag) VALUES (?)", (tag,),
                 )
+            self._conn.commit()
+
+    def save_raw_turns(self, node_id: str,
+                       turns: list[tuple[str, str]]) -> None:
+        """Persist tier-3 raw turn data for a node. `turns` is a list of
+        (role, text) pairs in original order."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM raw_turns WHERE node_id = ?", (node_id,),
+            )
+            self._conn.executemany(
+                "INSERT INTO raw_turns (node_id, position, role, text) "
+                "VALUES (?, ?, ?, ?)",
+                [(node_id, i, role, text) for i, (role, text) in enumerate(turns)],
+            )
+            self._conn.commit()
+
+    def get_raw_turns(self, node_id: str) -> list[tuple[int, str, str]]:
+        """Returns [(position, role, text), ...] in original order."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT position, role, text FROM raw_turns "
+                "WHERE node_id = ? ORDER BY position",
+                (node_id,),
+            ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def update_detailed_summary(self, node_id: str, detailed: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE nodes SET detailed_summary = ? WHERE node_id = ?",
+                (detailed, node_id),
+            )
             self._conn.commit()
 
     def get_node(self, node_id: str) -> MemoryNode | None:
@@ -191,4 +245,6 @@ def _row_to_node(row) -> MemoryNode:
         depth_level=row[7] if row[7] is not None else 1,
         compaction_reason=row[8],
         created_at=row[9],
+        # row[10] = embedding (opaque blob, handled elsewhere)
+        detailed_summary=row[11] if len(row) > 11 else None,
     )

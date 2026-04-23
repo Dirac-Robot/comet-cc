@@ -95,13 +95,19 @@ class ProxyServer:
                         if k.lower() not in _RESP_STRIP
                     },
                 )
-                await resp.prepare(req)
-                async for chunk in upstream.aiter_bytes():
-                    try:
+                try:
+                    await resp.prepare(req)
+                    async for chunk in upstream.aiter_bytes():
                         await resp.write(chunk)
-                    except ConnectionResetError:
-                        break
-                await resp.write_eof()
+                    await resp.write_eof()
+                except (ConnectionResetError, Exception) as e:
+                    # CC aborted the streamed read (Ctrl-C, client close, etc).
+                    # Upstream body already consumed — nothing to salvage; log
+                    # and return gracefully instead of leaking a traceback.
+                    if "Cannot write" in str(e) or isinstance(e, ConnectionResetError):
+                        logger.debug(f"client closed mid-stream: {e}")
+                    else:
+                        raise
         return resp
 
     def _ssl_context(self) -> ssl.SSLContext:

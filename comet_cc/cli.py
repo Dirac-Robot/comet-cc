@@ -191,14 +191,28 @@ def cmd_search(args) -> None:
 
 
 def cmd_read_node(args) -> None:
-    resp = client.get_node(args.node_id)
+    resp = client.read_memory(args.node_id, depth=args.depth)
     if not resp or not resp.get("ok"):
         if resp is None:
             print("daemon not reachable — start it with `comet-cc daemon start`")
             sys.exit(2)
         print(f"node {args.node_id} not found")
         sys.exit(1)
-    print(_format_node(resp["node"], full=True))
+    node = resp["node"]
+    depth = resp.get("depth", 0)
+    print(_format_node(node, full=True))
+    if depth == 1:
+        cached = " (cached)" if resp.get("cached") else " (generated)"
+        print(f"\n# Detailed summary{cached}")
+        print(resp.get("text", ""))
+        if resp.get("note"):
+            print(f"\nnote: {resp['note']}")
+    elif depth == 2:
+        turns = resp.get("turns", [])
+        print(f"\n# Raw turns ({len(turns)})")
+        for pos, role, text in turns:
+            print(f"\n[{pos}] {role}:")
+            print(text)
 
 
 def cmd_list_session(args) -> None:
@@ -252,9 +266,11 @@ def main() -> None:
     s.add_argument("--min-score", type=float, default=0.30)
     s.add_argument("--no-brief", action="store_true")
 
-    rn = sub.add_parser("read-node", help="Read a specific node by id")
+    rn = sub.add_parser("read-node", help="Read a node at a given depth (0=summary, 1=detailed lazy-gen, 2=raw turns)")
     rn.add_argument("node_id")
     rn.add_argument("--session", default=None)
+    rn.add_argument("--depth", type=int, default=0, choices=[0, 1, 2],
+                    help="0 summary (default), 1 detailed summary, 2 raw turn data")
 
     ls = sub.add_parser("list-session", help="List all nodes in a session")
     ls.add_argument("session")
