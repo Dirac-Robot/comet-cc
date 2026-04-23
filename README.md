@@ -242,6 +242,30 @@ content, file embedding), session handoff / inherited memory. If those
 matter for your workflow, reach for the full
 [CoMeT](https://github.com/Dirac-Robot/CoMeTPro).
 
+### Sensor input truncation (Claude-only constraint)
+
+One deliberate divergence from CoMeT: the sensor sees only
+*truncated* L1 content — `[role] text[:500]` per buffer entry, last 5
+entries, plus the current turn capped at 4000 chars. The full CoMeT
+sensor sees every entry at full length.
+
+Why: CoMeT itself can use any cheap SLM as its sensor (gpt-4o-mini at
+$0.15/M, Claude 3 Haiku at $0.25/M, or a local Ollama model for free),
+so feeding it a full 200K-token coding turn every single turn costs
+nothing meaningful. CoMeT-CC can't — it runs inside Claude Code via
+`claude -p`, and the cheapest model Claude Code offers is the current
+Haiku, which is billed against your Claude subscription quota unit-for-
+unit with real tokens. Sending 200K × (K+1)/2 tokens to the sensor on
+every single turn would burn quota (and, equally important, stall the
+turn loop — haiku over 1M tokens takes 30s+, which is longer than the
+user's gap between turns, so the sensor would never catch up).
+
+The truncation keeps sensor latency at ~3-5s and quota impact near
+zero, at the cost of some topic-shift detection sensitivity on turns
+whose signal lives past the first 500 chars. If you'd rather trade
+latency for accuracy, bump the limits in `comet_cc/proxy/extractor.py`
+(`text[:500]`, `raw_content[:4000]`, `SENSOR_BUFFER_TAIL=5`).
+
 ## Configuration
 
 | Env var                        | Default                       | Role                                                                 |
