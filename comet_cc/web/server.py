@@ -77,12 +77,15 @@ async def _api_node(req: web.Request) -> web.Response:
         return web.json_response({"error": resp.get("error", "not found")},
                                  status=404)
     node = resp["node"]
-    # Tier-1 raw-turn count via separate RPC (optional nicety)
     linked = client.list_linked_nodes(nid, timeout=3.0) or {}
     node["_linked_children"] = [
         {"id": c["node_id"], "label": (c.get("summary") or "")[:80]}
         for c in (linked.get("nodes") or [])
     ]
+    # Tier-3 raw turns for the bottom scroll viewer. `read_memory depth=2`
+    # returns [[position, role, text], ...]. Daemon RPC is fast (sqlite read).
+    raw = client.read_memory(nid, depth=2, timeout=10.0) or {}
+    node["_raw_turns"] = raw.get("turns") or []
     return web.json_response({"ok": True, "node": node})
 
 

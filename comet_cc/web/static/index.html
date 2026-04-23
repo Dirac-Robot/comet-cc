@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <title>CoMeT-CC · Knowledge Graph</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
   <style>
     :root {
@@ -15,19 +18,20 @@
       --rule: #1a1a1a;
       --rule-soft: #b7b5ac;
       --accent: #2a2a2a;
+      --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0; padding: 0; height: 100%;
       background: var(--paper);
       color: var(--ink);
-      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Georgia", serif;
-      font-size: 14px;
+      font-family: var(--mono);
+      font-size: 13px;
       -webkit-font-smoothing: antialiased;
     }
     .app {
       display: grid;
-      grid-template-columns: 1fr 380px;
+      grid-template-columns: 1fr 440px;
       height: 100vh;
     }
     .graph-pane {
@@ -40,19 +44,26 @@
     }
     .header {
       position: absolute; top: 0; left: 0; right: 0;
-      padding: 14px 20px;
+      padding: 18px 24px 16px 24px;
       background: var(--paper);
       border-bottom: 1px solid var(--rule);
-      font-variant: small-caps;
-      letter-spacing: 0.1em;
-      font-size: 12px;
       display: flex;
       justify-content: space-between;
       align-items: baseline;
       z-index: 5;
     }
-    .header .title { font-weight: 600; color: var(--ink); }
-    .header .meta  { color: var(--ink-ghost); font-size: 11px; }
+    .header .title {
+      font-weight: 700;
+      color: var(--ink);
+      font-size: 20px;
+      letter-spacing: 0.02em;
+    }
+    .header .meta {
+      color: var(--ink-ghost);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
     .legend {
       position: absolute; bottom: 16px; left: 20px;
       background: var(--paper);
@@ -70,16 +81,22 @@
     .legend .dot-low  { display: inline-block; width: 10px; height: 10px; background: var(--paper); border: 1px dashed var(--ink-soft); border-radius: 50%; vertical-align: middle; margin-right: 6px; }
 
     .detail-pane {
-      padding: 24px 28px 48px 28px;
-      overflow-y: auto;
+      display: grid;
+      grid-template-rows: minmax(160px, 40%) 1fr;
       background: var(--paper);
-      border-left: 0;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .detail-scroll {
+      padding: 24px 28px 20px 28px;
+      overflow-y: auto;
+      min-height: 0;
     }
     .detail-pane h2 {
       font-family: inherit;
-      font-size: 14px;
-      font-variant: small-caps;
-      letter-spacing: 0.12em;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       font-weight: 600;
       margin: 0 0 6px 0;
       padding-bottom: 6px;
@@ -87,19 +104,20 @@
     }
     .detail-pane .nid {
       color: var(--ink-ghost);
-      font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+      font-family: var(--mono);
       font-size: 11px;
       margin-bottom: 18px;
     }
     .detail-pane .section {
       margin: 18px 0 6px 0;
-      font-variant: small-caps;
-      letter-spacing: 0.1em;
-      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 10.5px;
       color: var(--ink-ghost);
+      font-weight: 500;
     }
     .detail-pane p, .detail-pane li {
-      font-size: 14px;
+      font-size: 13px;
       line-height: 1.55;
       margin: 0 0 8px 0;
     }
@@ -126,15 +144,67 @@
     .imp-badge {
       display: inline-block;
       padding: 0 6px;
-      font-size: 11px;
-      font-variant: small-caps;
+      font-size: 10.5px;
       letter-spacing: 0.08em;
+      text-transform: uppercase;
       border: 1px solid var(--ink);
       color: var(--ink);
       margin-right: 8px;
     }
     .imp-badge.high { background: var(--ink); color: var(--paper); }
     .imp-badge.low  { border: 1px dashed var(--rule-soft); color: var(--ink-ghost); }
+
+    /* Tier-3 raw viewer (bottom, scrollable) — takes the majority of the
+       right-pane vertical space so long raw dumps are actually readable */
+    .raw-pane {
+      border-top: 1px solid var(--rule);
+      background: var(--paper);
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .raw-pane .raw-header {
+      padding: 8px 28px;
+      border-bottom: 1px solid var(--rule-soft);
+      font-size: 10.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-ghost);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .raw-pane .raw-scroll {
+      overflow-y: auto;
+      padding: 10px 28px 16px 28px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      line-height: 1.55;
+    }
+    .raw-pane .raw-turn {
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px dashed var(--rule-soft);
+    }
+    .raw-pane .raw-turn:last-child { border-bottom: 0; }
+    .raw-pane .raw-meta {
+      font-size: 10px;
+      color: var(--ink-ghost);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .raw-pane .raw-body {
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--ink);
+    }
+    .raw-pane .raw-empty {
+      color: var(--ink-ghost);
+      font-style: italic;
+      padding: 14px 0;
+    }
 
     .toast {
       position: absolute; bottom: 16px; right: 20px;
@@ -165,10 +235,21 @@
       </div>
       <div class="toast" id="toast"></div>
     </div>
-    <div class="detail-pane" id="detail">
-      <h2>Node detail</h2>
-      <p class="placeholder">Click a node to inspect its summary, trigger,
-      tags, and linked neighbors.</p>
+    <div class="detail-pane">
+      <div class="detail-scroll" id="detail">
+        <h2>Node detail</h2>
+        <p class="placeholder">Click a node to inspect its summary, trigger,
+        tags, and linked neighbors.</p>
+      </div>
+      <div class="raw-pane">
+        <div class="raw-header">
+          <span id="raw-title">Raw turns · tier 3</span>
+          <span id="raw-count"></span>
+        </div>
+        <div class="raw-scroll" id="raw">
+          <div class="raw-empty">Select a node to view its absorbed turns verbatim.</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -178,6 +259,8 @@
   const detailEl  = document.getElementById('detail');
   const metaEl    = document.getElementById('meta');
   const toastEl   = document.getElementById('toast');
+  const rawEl     = document.getElementById('raw');
+  const rawCountEl= document.getElementById('raw-count');
 
   function toast(msg, persist=false) {
     toastEl.textContent = msg;
@@ -213,8 +296,8 @@
       borderWidth: n.is_child ? 1 : 1.5,
       borderWidthSelected: 3,
       font: {
-        face: 'Iowan Old Style, Georgia, serif',
-        size: 12,
+        face: 'JetBrains Mono, ui-monospace, monospace',
+        size: 11,
         color: fontColor,
         strokeWidth: 3,
         strokeColor: paper,
@@ -293,17 +376,41 @@
     detailEl.innerHTML =
       '<h2>Node detail</h2><div class="nid">' + id + '</div>' +
       '<p class="placeholder">Loading…</p>';
+    rawEl.innerHTML = '<div class="raw-empty">Loading raw turns…</div>';
+    rawCountEl.textContent = '';
     try {
       const r = await fetch('/api/node/' + encodeURIComponent(id));
       const body = await r.json();
       if (!body.ok) {
         detailEl.innerHTML = '<h2>Node detail</h2><p>' + (body.error || 'not found') + '</p>';
+        rawEl.innerHTML = '<div class="raw-empty">—</div>';
         return;
       }
       renderDetail(body.node);
+      renderRaw(body.node._raw_turns || []);
     } catch (e) {
       detailEl.innerHTML = '<h2>Node detail</h2><p>' + String(e) + '</p>';
+      rawEl.innerHTML = '<div class="raw-empty">—</div>';
     }
+  }
+
+  function renderRaw(turns) {
+    rawCountEl.textContent = turns.length ? (turns.length + ' turn' + (turns.length === 1 ? '' : 's')) : '';
+    if (!turns.length) {
+      rawEl.innerHTML = '<div class="raw-empty">No raw turns stored for this node (pre-tier-3 node, or parent without absorbed turns).</div>';
+      return;
+    }
+    const parts = turns.map(t => {
+      const [pos, role, text] = t;
+      return (
+        '<div class="raw-turn">' +
+          '<div class="raw-meta">[' + pos + '] ' + esc(role) + '</div>' +
+          '<div class="raw-body">' + esc(text || '') + '</div>' +
+        '</div>'
+      );
+    });
+    rawEl.innerHTML = parts.join('');
+    rawEl.scrollTop = 0;
   }
 
   function esc(s) {
