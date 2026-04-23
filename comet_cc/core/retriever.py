@@ -66,7 +66,9 @@ def render_nodes(nodes: list[MemoryNode]) -> str:
         return ""
     lines = ["## Retrieved Memory"]
     for n in nodes:
-        line = f"[{n.node_id}] ({n.importance}) {n.summary}"
+        # MED is the implicit default — elide it so only HIGH/LOW stand out.
+        imp = "" if n.importance == "MED" else f" ({n.importance})"
+        line = f"[{n.node_id}]{imp} {n.summary}"
         if n.trigger:
             line += f" | {n.trigger}"
         lines.append(line)
