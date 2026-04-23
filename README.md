@@ -67,10 +67,39 @@ eval "$(comet-cc env)"     # current shell
 claude                     # now goes through the proxy
 ```
 
-For IDE integrations (VSCode, JetBrains launch configs, etc.), put
-`ANTHROPIC_BASE_URL` and `NODE_EXTRA_CA_CERTS` in the launch environment.
 To turn the proxy off, just run `claude` without those variables (or
 `comet-cc daemon stop` to free the port entirely).
+
+### GUI editors (VSCode / JetBrains / Cursor)
+
+The CC extension spawns the same `claude` binary under the hood, so any
+route that puts `ANTHROPIC_BASE_URL` + `NODE_EXTRA_CA_CERTS` into its
+process environment works. The bundled helper handles this end-to-end:
+
+```bash
+scripts/setup-gui-env.sh install            # this boot only
+scripts/setup-gui-env.sh install --persist  # + LaunchAgent (autostart daemon, survives reboot)
+scripts/setup-gui-env.sh status
+scripts/setup-gui-env.sh uninstall
+```
+
+What `install` does, per OS:
+
+- **macOS** — `launchctl setenv` for the current boot (visible to GUI
+  apps immediately), plus a managed block appended to `~/.zshenv` for
+  future terminals. `--persist` adds a LaunchAgent at
+  `~/Library/LaunchAgents/io.cometcc.daemon.plist` that autostarts the
+  daemon on login and exports the env vars to every process launched
+  via launchd.
+- **Linux / other** — a managed block appended to `~/.profile` (read by
+  most display managers so GUI apps inherit it). Log out + back in to
+  pick up the change.
+
+After running `install`, quit + relaunch your editor so it inherits the
+new environment. Verify with `scripts/setup-gui-env.sh status` (should
+show `✓ ANTHROPIC_BASE_URL=…`), then watch `~/.comet-cc/logs/daemon.log`
+while chatting — `trim[...]` and `injected retrieval` lines mean the
+proxy is in the path.
 
 ## CLI
 
