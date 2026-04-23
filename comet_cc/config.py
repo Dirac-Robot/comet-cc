@@ -91,3 +91,18 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 CROSS_SESSION_RETRIEVAL = _env_flag("COMET_CC_CROSS_SESSION", default=False)
+
+
+# ---------- Graph linking (similarity-based cross-link + hop expansion) ----------
+
+# Min cosine similarity between two nodes to auto-add a bidirectional `links`
+# edge when a new node is compacted. Matches full CoMeT (1 - 0.45 distance).
+CROSS_LINK_SIM_THRESHOLD = float(
+    os.environ.get("COMET_CC_CROSS_LINK_SIM", "0.55")
+)
+CROSS_LINK_TOP_K = int(os.environ.get("COMET_CC_CROSS_LINK_TOP_K", "10"))
+
+# Retrieval graph expansion: after the initial cosine match, walk one hop
+# through each top-result's links and surface neighbors with a relevance
+# decay. Set the decay to 0 to disable expansion.
+HOP1_DECAY = float(os.environ.get("COMET_CC_HOP1_DECAY", "0.5"))

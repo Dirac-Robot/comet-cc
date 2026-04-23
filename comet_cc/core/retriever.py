@@ -21,7 +21,8 @@ def get_context_window(
     max_nodes: int = 8,
     min_score: float = 0.30,
 ) -> list[MemoryNode]:
-    """Passive/both first, then active by vector match against `query`.
+    """Passive/both first, then active by vector match against `query`,
+    then 1-hop graph expansion from the cosine-top via `links`.
 
     Scoped to `session_id` unless `COMET_CC_CROSS_SESSION=1` is set.
     CoMeT-CC doesn't support session handoff; leaking another session's
@@ -36,6 +37,7 @@ def get_context_window(
     passive_ids = {n.node_id for n in passives}
 
     actives: list[MemoryNode] = []
+    ranked_scores: list[tuple[str, float]] = []
     if query:
         candidates = store.list_active_with_embeddings(
             session_id=session_id, cross_session=cross,
@@ -44,9 +46,11 @@ def get_context_window(
         if candidates:
             q_vec = vector.embed(query)
             pairs = [(n.node_id, e) for n, e in candidates]
-            ranked = vector.cosine_search(q_vec, pairs, top_k=remaining, min_score=min_score)
+            ranked_scores = vector.cosine_search(
+                q_vec, pairs, top_k=remaining, min_score=min_score,
+            )
             by_id = {n.node_id: n for n, _ in candidates}
-            actives = [by_id[nid] for nid, _ in ranked]
+            actives = [by_id[nid] for nid, _ in ranked_scores]
     else:
         candidates = store.list_active_with_embeddings(
             session_id=session_id, cross_session=cross,
@@ -55,7 +59,37 @@ def get_context_window(
         actives = [n for n, _ in candidates_sorted
                    if n.node_id not in passive_ids][:remaining]
 
-    return passives + actives
+    primary = passives + actives
+
+    # 1-hop expansion via `links`. Neighbor nodes ride in at a decayed
+    # relevance (hop1_decay × parent's similarity) so they don't displace
+    # the direct matches. Bounded by max_nodes; skips passives/duplicates.
+    if config.HOP1_DECAY > 0 and ranked_scores:
+        primary_ids = {n.node_id for n in primary}
+        neighbor_scores: dict[str, float] = {}
+        id_to_node = {n.node_id: n for n in actives}
+        for nid, sim in ranked_scores:
+            node = id_to_node.get(nid)
+            if node is None or not node.links:
+                continue
+            base = sim * config.HOP1_DECAY
+            for link_id in node.links:
+                if link_id in primary_ids:
+                    continue
+                # keep the strongest hop-in score for a given neighbor
+                if neighbor_scores.get(link_id, 0.0) < base:
+                    neighbor_scores[link_id] = base
+        if neighbor_scores and len(primary) < max_nodes:
+            sorted_neighbors = sorted(
+                neighbor_scores.items(), key=lambda kv: kv[1], reverse=True,
+            )
+            slots = max_nodes - len(primary)
+            fetched = store.get_nodes([nid for nid, _ in sorted_neighbors[:slots]])
+            # Drop child nodes surfaced via the hop (shouldn't happen
+            # structurally, but keeps the memory map parent-only).
+            primary += [n for n in fetched if n.parent_node_id is None]
+
+    return primary[:max_nodes]
 
 
 def render_nodes(nodes: list[MemoryNode]) -> str:

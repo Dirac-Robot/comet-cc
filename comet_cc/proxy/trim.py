@@ -391,6 +391,10 @@ class TrimOrchestrator:
                     self.store.save_raw_turns(node.node_id, tier3)
                 if brief and brief.strip():
                     self.store.save_session_brief(sid, brief.strip())
+            # Auto cross-link against same-session peers above the similarity
+            # threshold — builds a traversable graph over time so retrieval
+            # can surface neighbors via 1-hop walk.
+            self._cross_link(node.node_id, emb, sid)
 
             # Bundle synthesis — for any tool_bundle L1 entries in this
             # buffer, synthesize a bundle-parent node + per-call children,
@@ -423,6 +427,33 @@ class TrimOrchestrator:
             state = self.registry.get(sid)
             if state:
                 state.compact_in_flight = False
+
+    def _cross_link(self, new_id: str, new_emb, sid: str) -> None:
+        """Bidirectionally link a newly-saved node to its most-similar
+        same-session peers above CROSS_LINK_SIM_THRESHOLD."""
+        if config.HOP1_DECAY == 0 and config.CROSS_LINK_TOP_K == 0:
+            return
+        cross = config.CROSS_SESSION_RETRIEVAL
+        with self.store_lock:
+            peers = self.store.list_active_with_embeddings(
+                session_id=sid, cross_session=cross,
+            )
+        pairs = [(n.node_id, e) for n, e in peers if n.node_id != new_id]
+        if not pairs:
+            return
+        hits = vector.cosine_search(
+            new_emb, pairs,
+            top_k=config.CROSS_LINK_TOP_K,
+            min_score=config.CROSS_LINK_SIM_THRESHOLD,
+        )
+        if not hits:
+            return
+        for other_id, score in hits:
+            self.store.add_bidirectional_link(new_id, other_id)
+        logger.info(
+            f"cross_link[{sid[:8]}]: {new_id} linked to {len(hits)} peer(s) "
+            f"(top_sim={hits[0][1]:.3f})"
+        )
 
     def _synthesize_bundle_for(
         self, bundle_mem: "L1Memory", sid: str, emb_source: MemoryNode,

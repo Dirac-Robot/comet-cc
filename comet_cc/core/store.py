@@ -234,6 +234,54 @@ class NodeStore:
             ).fetchall()
         return [_row_to_node(r) for r in rows]
 
+    def add_bidirectional_link(self, a_id: str, b_id: str) -> None:
+        """Append `b_id` to node a's links and vice versa. Idempotent — skips
+        if either side already knows the edge."""
+        if a_id == b_id:
+            return
+        with self._lock:
+            rows = {
+                rid: json.loads(raw) if raw else []
+                for rid, raw in self._conn.execute(
+                    "SELECT node_id, links FROM nodes WHERE node_id IN (?, ?)",
+                    (a_id, b_id),
+                ).fetchall()
+            }
+            if a_id not in rows or b_id not in rows:
+                return
+            a_links = rows[a_id]
+            b_links = rows[b_id]
+            changed = False
+            if b_id not in a_links:
+                a_links.append(b_id)
+                self._conn.execute(
+                    "UPDATE nodes SET links = ? WHERE node_id = ?",
+                    (json.dumps(a_links), a_id),
+                )
+                changed = True
+            if a_id not in b_links:
+                b_links.append(a_id)
+                self._conn.execute(
+                    "UPDATE nodes SET links = ? WHERE node_id = ?",
+                    (json.dumps(b_links), b_id),
+                )
+                changed = True
+            if changed:
+                self._conn.commit()
+
+    def get_nodes(self, node_ids: list[str]) -> list[MemoryNode]:
+        """Batch `get_node`. Preserves input order; silently drops missing."""
+        if not node_ids:
+            return []
+        placeholders = ",".join("?" for _ in node_ids)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {_COLUMNS} FROM nodes WHERE node_id IN ({placeholders})",
+                node_ids,
+            ).fetchall()
+        by_id = {r[0]: _row_to_node(r) for r in rows}
+        return [by_id[nid] for nid in node_ids if nid in by_id]
+
     def get_all_tags(self) -> set[str]:
         with self._lock:
             rows = self._conn.execute("SELECT tag FROM all_tags").fetchall()
