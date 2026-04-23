@@ -6,6 +6,20 @@ inspected, optionally rewritten (raw turns replaced with a running
 summary), and forwarded to Anthropic. Drives summarization with `claude -p`
 subprocesses so there are no external API keys to manage.
 
+> **Built on [CoMeT](https://github.com/Dirac-Robot/CoMeTPro)** — the
+> Cognitive Memory Tree system. CoMeT is a lossless structured memory
+> substrate for LLM agents: a dual-speed sensor + compacter pipeline lands
+> conversation, tool output, and documents as `MemoryNode`s (summary +
+> trigger + lazy-detail + full raw), with 3-tier progressive retrieval,
+> cross-session consolidation, synthesized knowledge hubs, and snapshot
+> protection. CoMeT-CC ports the core pipeline (sensor, compacter,
+> 3-tier storage, tool-bundle synthesis, node linking) down to a
+> single-session scope for the Claude Code plugin setting, dropping the
+> cross-session consolidation and graph-traversal stages. If your use
+> case outgrows CC or needs multi-agent handoff, go to the full
+> [CoMeT](https://github.com/Dirac-Robot/CoMeTPro) (or
+> [CoBrA](https://github.com/Dirac-Robot/CoBrA) which sits on top of it).
+
 ## What it does
 
 CC sessions are ephemeral. When the context window fills, CC's built-in
