@@ -208,15 +208,23 @@ class Daemon:
         return {"ok": True, "queued": True, "depth": self.compact_queue.qsize()}
 
     def _m_queue_depth(self, _p: dict) -> dict:
-        """Reports pending jobs. Useful for tests to await idle state."""
+        """Reports pending jobs across both the legacy hook-era queue and
+        the trim orchestrator. `active` counts the trim worker's in-flight
+        compact across all sessions. Tests use this to await full idle."""
+        trim_jobs = self.trim.jobs.qsize() if self.trim else 0
+        trim_active = sum(
+            1 for s in (self.trim.registry.snapshot() if self.trim else [])
+            if s.compact_in_flight or s.sensor_queued
+        )
         return {
             "ok": True,
-            "queue_size": self.compact_queue.qsize(),
-            "active": self._active_job_count(),
+            "queue_size": self.compact_queue.qsize() + trim_jobs,
+            "active": self._active_job_count() + trim_active,
         }
 
     def _active_job_count(self) -> int:
-        """1 if a compact job is mid-flight in the worker, 0 otherwise."""
+        """1 if a hook-era compact job is mid-flight, 0 otherwise.
+        (The trim worker's in-flight count is reported separately.)"""
         return 1 if getattr(self, "_worker_busy", False) else 0
 
     # ---------- compact worker ----------
