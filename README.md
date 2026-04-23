@@ -4,7 +4,8 @@ Persistent memory layer for Claude Code. Runs as a local TLS proxy that CC
 routes through via `ANTHROPIC_BASE_URL`; every `/v1/messages` request is
 inspected, optionally rewritten (raw turns replaced with a running
 summary), and forwarded to Anthropic. Drives summarization with `claude -p`
-subprocesses so there are no external API keys to manage.
+subprocesses so there are no external API keys to manage — everything
+bills against your existing Claude subscription.
 
 > **Built on [CoMeT](https://github.com/Dirac-Robot/CoMeTPro)** — the
 > Cognitive Memory Tree system. A few things CoMeT brings to the table
@@ -17,56 +18,65 @@ subprocesses so there are no external API keys to manage.
 >   token-cost problem; what matters is what you actually drill into.
 > - **Lossless structured memory.** Summaries *index*, raw is
 >   *preserved*. Compact isn't a one-way compression — every compacted
->   node links back to the exact turns it absorbed.
-> - **Dual-speed sensor + compacter pipeline.** Cheap SLM sensor gates
+>   node stores the absorbed turns verbatim as tier 3.
+> - **Dual-speed sensor + compacter pipeline.** Cheap haiku sensor gates
 >   every turn for topic shift / cognitive load / redundancy; expensive
->   compacter only runs when a gate trips. Per-turn overhead stays low
->   even as context grows.
+>   sonnet compacter only runs when a gate trips. Per-turn overhead
+>   stays low even as context grows.
 > - **Hierarchical tool-bundle synthesis.** A turn with N tool calls
 >   becomes ONE bundle-parent node (visible in the memory map) plus N
 >   linked child nodes (drill-down). Tool noise never fragments the
 >   dialog layer.
 > - **Node-graph retrieval.** Memory is a linked graph, not a flat set.
->   Retrieval can walk `links` and `parent_node_id` edges for 2-hop
->   context that flat vector search would miss.
+>   Similarity cross-links are added automatically on save, and
+>   retrieval walks `links` one hop from each direct match so a query
+>   surfaces its semantic neighborhood, not just the single closest node.
 >
 > CoMeT-CC ports sensor, compacter, 3-tier storage, tool-bundle
-> synthesis, and node linking down to a single-session scope suitable
-> for a Claude Code plugin. What it *doesn't* carry from the full
-> CoMeT: cross-session consolidation, graph-based dedup/link
-> normalization, multi-modality pipelines (external content, file
-> embedding), and session handoff. If your use case needs any of
-> those, go to the full [CoMeT](https://github.com/Dirac-Robot/CoMeTPro)
-> or [CoBrA](https://github.com/Dirac-Robot/CoBrA) (which sits on top
-> of CoMeT).
+> synthesis, similarity cross-linking, and retrieval graph expansion
+> down to a single-session scope suitable for a Claude Code plugin.
+> What it *doesn't* carry from the full CoMeT: post-session
+> consolidation (dedup + cluster synthesis), multi-modality pipelines
+> (external content, file embedding), and session handoff. If your use
+> case needs any of those, go to
+> [CoMeT](https://github.com/Dirac-Robot/CoMeTPro) or
+> [CoBrA](https://github.com/Dirac-Robot/CoBrA) (which sits on top).
 
-## What it does
+## How it works
 
-CC sessions are ephemeral. When the context window fills, CC's built-in
-compactor compresses older turns into a short summary and anything older
-effectively disappears. CoMeT-CC rides alongside each session:
+Every outgoing `/v1/messages` request passes through the proxy. Per-turn
+flow:
 
-- A **haiku sensor** inspects the outgoing request per turn for topic
-  shifts, cognitive load, and buffer size.
-- On trip, a **sonnet compacter** produces a structured `MemoryNode`
-  (summary, trigger, tags, importance, recall mode) plus a rolling
-  session brief.
-- Nodes land in a local **sqlite store** with BGE-M3 multilingual
-  embeddings, indexed across every session on the machine.
-- Every outgoing request gets:
-  - **Summary rewrite**: absorbed turns are replaced with a `(user,
-    assistant)` summary pair, keeping the tail intact. CC's local
-    transcript stays untouched; only what Anthropic processes shrinks.
-  - **Retrieval injection**: passive/both nodes plus vector-matched
-    active nodes plus the session brief ride as a `<system-reminder>`
-    block on the last user message.
-- A **skill** (`comet-cc-memory`) + CLI (`search / read-node /
-  list-session / brief`) give the model an active-recall path when the
-  automatic injection misses something.
+1. Parse the request; find the session_id in `metadata.user_id`.
+2. Convert `messages[]` to per-message fingerprints (for rewrite tracking)
+   and a bundled view (tool_use + tool_result chains collapsed) for the
+   sensor.
+3. **Summary rewrite** — if a summary exists for this session, absorbed
+   messages are dropped from the outgoing array and replaced with a
+   `(user, assistant)` summary pair. CC's local transcript is untouched;
+   only what Anthropic sees shrinks.
+4. **Retrieval injection** — passive/both nodes + vector-matched active
+   nodes + session brief ride as a `<system-reminder>` block on the last
+   user message. Graph expansion surfaces 1-hop neighbors of the top
+   matches at a relevance decay.
+5. **Sensor check** (throttled, async) — if the unabsorbed buffer crosses
+   the min size, a haiku call assesses the latest turn against the buffer
+   tail. On a trip (`topic_shift` / `high_load` / `buffer_overflow`),
+   the compact worker fires.
+6. **Compact** — sonnet produces a structured `MemoryNode` (summary,
+   trigger, tags, importance, recall_mode) plus a rolling session brief.
+   Tier-3 raw turns are stored verbatim in a side table.
+7. **Bundle synthesis** — if the compacted buffer contained any
+   tool_bundle entries, an extra haiku call produces a bundle-parent
+   summary + per-call children, saved with `parent_node_id` + `links`
+   so the memory map shows only the parent.
+8. **Cross-link** — the new node's embedding is cosined against same-
+   session active peers; anything above threshold gets a bidirectional
+   `links` edge, building the graph incrementally.
 
-A long-lived **daemon** hosts the warm BGE-M3 embedder, the NodeStore, a
-background sensor/compacter worker, a Unix-socket RPC endpoint for the
-skill CLI, and the TLS proxy itself — all in one process.
+A long-lived **daemon** hosts the warm BGE-M3 embedder, the NodeStore,
+the trim worker, a Unix-socket RPC endpoint (for skill + CLI + graph
+view), and the TLS proxy itself — all in one process.
 
 ## Install
 
@@ -138,51 +148,62 @@ proxy is in the path.
 ## CLI
 
 ```bash
+# Lifecycle
 comet-cc install           # CA + skill
 comet-cc uninstall         # remove skill (cert + store kept)
 comet-cc status            # cert, skill, daemon, proxy state
 comet-cc env               # print ANTHROPIC_BASE_URL + NODE_EXTRA_CA_CERTS
-
 comet-cc daemon start | stop | status
 comet-cc run <cmd> [args...]
 
 # Memory operations (also invoked by the skill from inside CC)
 comet-cc search "<query>" [--session <id>] [--top N]
-comet-cc read-node <node_id>
-comet-cc list-session <session_id>
-comet-cc brief <session_id>
+comet-cc read-node <node_id>                 # depth 0: summary + trigger
+comet-cc read-node <node_id> --depth 1       # detailed summary (lazy-generated, cached)
+comet-cc read-node <node_id> --depth 2       # tier-3 raw turns, verbatim
+comet-cc read-node <node_id> --links         # append linked children
+comet-cc list-session <session_id>           # parent nodes only
+comet-cc list-session <session_id> --all     # include bundle children
+comet-cc brief <session_id>                  # rolling session brief
+
+# Visualization
+comet-cc graph             # web knowledge-graph view (opens in browser)
 ```
 
-## How it compares to the full CoBrA harness
+### 3-tier read semantics
 
-CoMeT-CC is a lightweight variant. One concession remains — the full
-harness's end-to-end consolidation pipeline is out of scope here.
+Pick the lowest depth that answers the question — escalating wastes tokens
+and clock time:
 
-### Lightweight memory harness
+| Depth | Cost | Use for |
+|---|---|---|
+| 0 — summary + trigger | free | factual questions the retrieval block already covers |
+| 1 — detailed summary (haiku, cached) | ~2–5s first call, free thereafter | specifics the T1 summary glossed over |
+| 2 — raw turns, verbatim | free (sqlite read) | exact words: user instruction / error message / code snippet |
 
-The full harness covers many modalities (dialog / code / execution
-traces / external APIs / images / session handoffs) and runs a
-post-session consolidation stage (dedup, cross-session link graph,
-cluster synthesis, lessons extraction). CoMeT-CC keeps only what a CC
-session benefits from day-to-day: two modalities (dialog / code),
-passive/active/both recall modes, summary/trigger semantics, vector
-search. Batch consolidation is deliberately out of scope.
+### Graph view
 
-If that matters for your workflow, use the full harness directly.
-CoMeT-CC is for bolting a persistent memory layer onto an otherwise
-native Claude Code workflow.
+`comet-cc graph` spawns a local web server on `http://127.0.0.1:8450/`
+and opens your browser to an e-ink-styled force-directed visualization of
+the store. Solid edges = similarity cross-links; dashed arrows = parent →
+child. HIGH nodes filled, MED hollow, LOW / bundle-children dimmed.
+Click any node → right panel shows summary, trigger, tags, metadata,
+linked children, peer links, and the full tier-3 raw turns (scrollable).
+Runs in the foreground; Ctrl-C to stop.
+
+## Design notes
 
 ### Why a proxy instead of hooks
 
-An earlier version of CoMeT-CC used CC's hook system (SessionStart /
+An earlier version used CC's hook system (SessionStart /
 UserPromptSubmit / Stop / PreCompact). That path had two structural
 limits: (1) raw turns could only be replaced at CC's own compact
 boundary, because hooks can augment but not rewrite messages in flight;
 (2) anchors went in *alongside* CC's compactor rather than replacing
-its output. The proxy architecture lifts both — every outgoing request
-passes through our listener, so a summary pair can substitute absorbed
-turns at any turn, and CC's native compactor effectively never has to
-run (the upstream model only ever sees the compacted view). The hook
+its output. The proxy lifts both — every outgoing request passes
+through our listener, so a summary pair can substitute absorbed turns
+at any turn, and CC's native compactor effectively never has to run
+(the upstream model only ever sees the compacted view). The hook
 version is archived on the `hook-arch-archive` branch.
 
 ### /compact is intercepted
@@ -195,20 +216,49 @@ each other's state. If you truly want CC's native compactor, stop the
 daemon (`comet-cc daemon stop`) — the proxy is gone, CC talks directly
 to Anthropic, and `/compact` works as usual.
 
+### Session scoping + cross-session toggle
+
+Retrieval is scoped to the current session by default — CoMeT-CC
+doesn't try to support session handoff, so leaking another session's
+memory into a fresh one would be surprising. Cross-session is available
+as an opt-in:
+
+```bash
+export COMET_CC_CROSS_SESSION=1
+```
+
+With the toggle on, passive/active retrieval spans every session in the
+store; useful if you want long-running preference or rule nodes to
+survive `/compact`, `/clear`, or `--resume` sequences that rotate
+session_ids.
+
+### Lightweight vs full CoMeT
+
+Inherited: sensor, compacter, 3-tier storage, tool-bundle synthesis,
+similarity cross-linking (`add_bidirectional_link`), retrieval 1-hop
+graph expansion. Dropped: post-session consolidation (dedup, cluster
+synthesis, lessons extraction), multi-modality pipelines (external
+content, file embedding), session handoff / inherited memory. If those
+matter for your workflow, reach for the full
+[CoMeT](https://github.com/Dirac-Robot/CoMeTPro).
+
 ## Configuration
 
-| Env var                       | Default          | Role                                        |
-|-------------------------------|------------------|---------------------------------------------|
-| `COMET_CC_HOME`               | `~/.comet-cc`    | Store + certs + logs root                   |
-| `COMET_CC_PROXY_HOST`         | `127.0.0.1`      | Bind address for the TLS listener           |
-| `COMET_CC_PROXY_PORT`         | `8443`           | Port for the TLS listener                   |
-| `COMET_CC_UPSTREAM`           | `https://api.anthropic.com` | Where the proxy forwards          |
-| `COMET_CC_MAX_L1`             | `20`             | Hard cap on unabsorbed buffer turns         |
-| `COMET_CC_MIN_L1`             | `3`              | Minimum buffer before compaction considered |
-| `COMET_CC_LOAD_THRESHOLD`     | `4`              | Sensor load (1–5) that trips compaction     |
-| `COMET_CC_MAX_CONTEXT_NODES`  | `8`              | Retrieval cap injected per turn             |
-| `COMET_CC_MIN_SIM`            | `0.30`           | Cosine floor for active-node matching       |
-| `COMET_CC_CROSS_SESSION`      | `0`              | `1` to retrieve nodes across all sessions (default: scope to current session) |
+| Env var                        | Default                       | Role                                                                 |
+|--------------------------------|-------------------------------|----------------------------------------------------------------------|
+| `COMET_CC_HOME`                | `~/.comet-cc`                 | Store + certs + logs root                                            |
+| `COMET_CC_PROXY_HOST`          | `127.0.0.1`                   | Bind address for the TLS listener                                    |
+| `COMET_CC_PROXY_PORT`          | `8443`                        | Port for the TLS listener                                            |
+| `COMET_CC_UPSTREAM`            | `https://api.anthropic.com`   | Where the proxy forwards                                             |
+| `COMET_CC_MAX_L1`              | `20`                          | Hard cap on unabsorbed buffer turns                                  |
+| `COMET_CC_MIN_L1`              | `3`                           | Minimum buffer before compaction considered                          |
+| `COMET_CC_LOAD_THRESHOLD`      | `4`                           | Sensor load (1–5) that trips compaction                              |
+| `COMET_CC_MAX_CONTEXT_NODES`   | `8`                           | Retrieval cap injected per turn                                      |
+| `COMET_CC_MIN_SIM`             | `0.30`                        | Cosine floor for active-node matching                                |
+| `COMET_CC_CROSS_SESSION`       | `0`                           | `1` to retrieve across all sessions (default: scope to current)      |
+| `COMET_CC_CROSS_LINK_SIM`      | `0.55`                        | Min cosine similarity to auto-add bidirectional `links` on save      |
+| `COMET_CC_CROSS_LINK_TOP_K`    | `10`                          | Max peers to cross-link to per new node                              |
+| `COMET_CC_HOP1_DECAY`          | `0.5`                         | Relevance decay for retrieval's 1-hop neighbors (0 disables)         |
 
 ## Troubleshooting
 
@@ -218,7 +268,8 @@ to Anthropic, and `/compact` works as usual.
 | `connection refused` | Daemon isn't up. `comet-cc daemon status`; if down, `comet-cc daemon start`. |
 | Trim never fires on your expected turn | Haiku sensor is non-deterministic on short/related topics. Lower `COMET_CC_MAX_L1` to force the overflow path, or watch `~/.comet-cc/logs/daemon.log` to see what it judged. |
 | Stale/unwanted summary keeps appearing | Reset store: `comet-cc daemon stop && rm -rf ~/.comet-cc/store.sqlite && comet-cc daemon start`. |
-| Port 8443 already in use | Another service has it. Override: `COMET_CC_PROXY_PORT=18443 comet-cc daemon start` and re-export before launching CC. |
+| Port 8443 / 8450 already in use | Another service has it. `COMET_CC_PROXY_PORT=18443 comet-cc daemon start` (and re-export before launching CC). Graph port is hard-coded at 8450 — kill whoever else uses it. |
+| Graph shows few edges | Only nodes saved *after* the cross-link feature landed carry edges. Older nodes stay isolated until they happen to be cross-linked to a future neighbor. |
 | `comet-cc install` regenerating CA every time | It's idempotent — if `ca.crt` + `server.pem` exist it reuses them. If something's off, inspect `~/.comet-cc/certs/`. |
 
 ## Testing
