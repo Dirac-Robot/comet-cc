@@ -74,6 +74,11 @@ class SessionRegistry:
             if not s:
                 return
             s.compact_in_flight = False
+            # Reset the throttle clock: the next incoming request should be
+            # free to queue a fresh sensor_check without waiting another
+            # SENSOR_THROTTLE_SEC window. Critical for compact granularity
+            # when a long compact ran while the user kept typing.
+            s.last_sensor_check = 0.0
             if summary_user and summary_asst:
                 s.absorbed_fps.update(absorbed_fps)
                 s.summary_user = summary_user

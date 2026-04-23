@@ -98,9 +98,11 @@ def _compact_blocked_body() -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
-# Throttle: only consider enqueuing a sensor job once per this many seconds
-# per session. Subsequent requests within the window skip the check.
-SENSOR_THROTTLE_SEC = 15.0
+# Throttle: min gap between successive sensor enqueues on the same session.
+# Short enough that granularity isn't lost when the user pushes turns back-
+# to-back (which would otherwise pile into one mega-compact), long enough
+# that multi-request burst doesn't queue N identical checks.
+SENSOR_THROTTLE_SEC = 4.0
 
 
 def _synth_ack(summary_text: str) -> str:

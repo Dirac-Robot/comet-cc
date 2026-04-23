@@ -46,8 +46,9 @@ def daemon_log() -> Path:
     return d / "daemon.log"
 
 
-# Sensor gating — maps to CoMeT's compacting.{max_l1_buffer, min_l1_buffer, load_threshold}
-MAX_L1_BUFFER = int(os.environ.get("COMET_CC_MAX_L1", "20"))
+# Sensor gating — matches CoMeT's compacting.{max_l1_buffer, min_l1_buffer,
+# load_threshold} defaults so compact granularity is similar.
+MAX_L1_BUFFER = int(os.environ.get("COMET_CC_MAX_L1", "10"))
 MIN_L1_BUFFER = int(os.environ.get("COMET_CC_MIN_L1", "3"))
 LOAD_THRESHOLD = int(os.environ.get("COMET_CC_LOAD_THRESHOLD", "4"))
 
