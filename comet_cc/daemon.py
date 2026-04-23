@@ -185,6 +185,11 @@ class Daemon:
             nodes = self.store.list_linked_nodes(parent_id)
         return {"ok": True, "nodes": [_node_to_dict(n) for n in nodes]}
 
+    def _m_list_all_nodes(self, _p: dict) -> dict:
+        with self._store_lock:
+            nodes = self.store.list_all()
+        return {"ok": True, "nodes": [_node_to_dict(n) for n in nodes]}
+
     def _m_list_passive(self, p: dict) -> dict:
         with self._store_lock:
             nodes = self.store.list_passive(session_id=p.get("session_id"))

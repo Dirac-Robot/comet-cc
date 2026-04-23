@@ -25,5 +25,9 @@ comet-cc = "comet_cc.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["comet_cc"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"comet_cc/templates" = "comet_cc/templates"
+"comet_cc/web/static" = "comet_cc/web/static"
+
 [tool.hatch.build.targets.wheel.shared-data]
 "skills/comet-cc-memory" = "share/comet_cc/skills/comet-cc-memory"

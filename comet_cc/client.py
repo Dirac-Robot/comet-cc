@@ -81,6 +81,10 @@ def list_linked_nodes(parent_id: str, timeout: float = 5.0) -> dict | None:
     return _rpc("list_linked_nodes", timeout, parent_id=parent_id)
 
 
+def list_all_nodes(timeout: float = 10.0) -> dict | None:
+    return _rpc("list_all_nodes", timeout)
+
+
 def list_passive(session_id: str | None, timeout: float = 5.0) -> dict | None:
     return _rpc("list_passive", timeout, session_id=session_id)
 

@@ -239,6 +239,28 @@ def cmd_list_session(args) -> None:
         print(_format_node(n))
 
 
+def cmd_graph(_args) -> None:
+    """Start a local web server rendering the knowledge graph; open browser.
+    Runs in the foreground — Ctrl-C stops it."""
+    import threading
+    import webbrowser
+    from comet_cc.web import server as web_server
+
+    if not daemon_mgmt.is_running():
+        print("daemon not running. start it first: `comet-cc daemon start`",
+              file=sys.stderr)
+        sys.exit(2)
+
+    host, port = "127.0.0.1", 8450
+    url = f"http://{host}:{port}/"
+    print(f"CoMeT-CC graph: {url}  (Ctrl-C to stop)")
+    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    try:
+        web_server.run(host=host, port=port)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+
+
 def cmd_brief(args) -> None:
     resp = client.load_session_brief(args.session)
     if not resp or not resp.get("ok"):
@@ -292,6 +314,8 @@ def main() -> None:
     b = sub.add_parser("brief", help="Show this session's rolling brief")
     b.add_argument("session")
 
+    sub.add_parser("graph", help="Open the knowledge graph in a web browser (e-ink style)")
+
     args = parser.parse_args()
     {
         "install": cmd_install,
@@ -304,6 +328,7 @@ def main() -> None:
         "read-node": cmd_read_node,
         "list-session": cmd_list_session,
         "brief": cmd_brief,
+        "graph": cmd_graph,
     }[args.cmd](args)
 
 

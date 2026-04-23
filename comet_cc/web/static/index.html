@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CoMeT-CC · Knowledge Graph</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+  <style>
+    :root {
+      --paper: #f5f4f0;
+      --paper-edge: #e6e4dd;
+      --ink: #1a1a1a;
+      --ink-soft: #4a4a4a;
+      --ink-ghost: #8a8a85;
+      --rule: #1a1a1a;
+      --rule-soft: #b7b5ac;
+      --accent: #2a2a2a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Georgia", serif;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      height: 100vh;
+    }
+    .graph-pane {
+      position: relative;
+      border-right: 1px solid var(--rule);
+      overflow: hidden;
+    }
+    #graph {
+      width: 100%; height: 100%;
+    }
+    .header {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 14px 20px;
+      background: var(--paper);
+      border-bottom: 1px solid var(--rule);
+      font-variant: small-caps;
+      letter-spacing: 0.1em;
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      z-index: 5;
+    }
+    .header .title { font-weight: 600; color: var(--ink); }
+    .header .meta  { color: var(--ink-ghost); font-size: 11px; }
+    .legend {
+      position: absolute; bottom: 16px; left: 20px;
+      background: var(--paper);
+      border: 1px solid var(--rule-soft);
+      padding: 10px 14px;
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--ink-soft);
+      z-index: 5;
+    }
+    .legend .swatch { display: inline-block; width: 16px; height: 1px; vertical-align: middle; margin-right: 6px; border-top: 1.5px solid var(--ink); }
+    .legend .swatch-dashed { border-top: 1.5px dashed var(--ink-soft); }
+    .legend .dot-high { display: inline-block; width: 10px; height: 10px; background: var(--ink); border-radius: 50%; vertical-align: middle; margin-right: 6px; }
+    .legend .dot-med  { display: inline-block; width: 10px; height: 10px; background: var(--paper); border: 1.2px solid var(--ink); border-radius: 50%; vertical-align: middle; margin-right: 6px; }
+    .legend .dot-low  { display: inline-block; width: 10px; height: 10px; background: var(--paper); border: 1px dashed var(--ink-soft); border-radius: 50%; vertical-align: middle; margin-right: 6px; }
+
+    .detail-pane {
+      padding: 24px 28px 48px 28px;
+      overflow-y: auto;
+      background: var(--paper);
+      border-left: 0;
+    }
+    .detail-pane h2 {
+      font-family: inherit;
+      font-size: 14px;
+      font-variant: small-caps;
+      letter-spacing: 0.12em;
+      font-weight: 600;
+      margin: 0 0 6px 0;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .detail-pane .nid {
+      color: var(--ink-ghost);
+      font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11px;
+      margin-bottom: 18px;
+    }
+    .detail-pane .section {
+      margin: 18px 0 6px 0;
+      font-variant: small-caps;
+      letter-spacing: 0.1em;
+      font-size: 11px;
+      color: var(--ink-ghost);
+    }
+    .detail-pane p, .detail-pane li {
+      font-size: 14px;
+      line-height: 1.55;
+      margin: 0 0 8px 0;
+    }
+    .detail-pane ul { padding-left: 18px; margin: 4px 0; }
+    .detail-pane .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      margin: 2px 4px 2px 0;
+      border: 1px solid var(--rule-soft);
+      border-radius: 2px;
+      font-size: 11px;
+      color: var(--ink-soft);
+    }
+    .detail-pane a {
+      color: var(--ink);
+      text-decoration: underline;
+      text-decoration-color: var(--rule-soft);
+      cursor: pointer;
+    }
+    .placeholder {
+      color: var(--ink-ghost);
+      font-style: italic;
+    }
+    .imp-badge {
+      display: inline-block;
+      padding: 0 6px;
+      font-size: 11px;
+      font-variant: small-caps;
+      letter-spacing: 0.08em;
+      border: 1px solid var(--ink);
+      color: var(--ink);
+      margin-right: 8px;
+    }
+    .imp-badge.high { background: var(--ink); color: var(--paper); }
+    .imp-badge.low  { border: 1px dashed var(--rule-soft); color: var(--ink-ghost); }
+
+    .toast {
+      position: absolute; bottom: 16px; right: 20px;
+      background: var(--paper);
+      border: 1px solid var(--rule-soft);
+      padding: 8px 14px;
+      font-size: 11px;
+      color: var(--ink-soft);
+      z-index: 5;
+      max-width: 40%;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="graph-pane">
+      <div class="header">
+        <span class="title">CoMeT-CC · Knowledge Graph</span>
+        <span class="meta" id="meta">loading…</span>
+      </div>
+      <div id="graph"></div>
+      <div class="legend">
+        <div><span class="dot-high"></span> HIGH importance</div>
+        <div><span class="dot-med"></span>  MED importance</div>
+        <div><span class="dot-low"></span>  LOW / child</div>
+        <div><span class="swatch"></span>         similarity link</div>
+        <div><span class="swatch swatch-dashed"></span> parent → child</div>
+      </div>
+      <div class="toast" id="toast"></div>
+    </div>
+    <div class="detail-pane" id="detail">
+      <h2>Node detail</h2>
+      <p class="placeholder">Click a node to inspect its summary, trigger,
+      tags, and linked neighbors.</p>
+    </div>
+  </div>
+
+<script>
+(async function () {
+  const graphEl   = document.getElementById('graph');
+  const detailEl  = document.getElementById('detail');
+  const metaEl    = document.getElementById('meta');
+  const toastEl   = document.getElementById('toast');
+
+  function toast(msg, persist=false) {
+    toastEl.textContent = msg;
+    if (!persist) setTimeout(() => { toastEl.textContent = ''; }, 2500);
+  }
+
+  const ink       = getCSS('--ink');
+  const paper     = getCSS('--paper');
+  const ruleSoft  = getCSS('--rule-soft');
+  const inkGhost  = getCSS('--ink-ghost');
+
+  function getCSS(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function nodeStyle(n) {
+    const impColor = n.importance === 'HIGH' ? ink : paper;
+    const borderColor = n.is_child ? ruleSoft : ink;
+    const fontColor = n.is_child ? inkGhost : ink;
+    return {
+      id: n.id,
+      label: n.label,
+      importance: n.importance,
+      is_child: n.is_child,
+      shape: 'dot',
+      size: n.importance === 'HIGH' ? 14 : (n.is_child ? 6 : 10),
+      color: {
+        background: impColor,
+        border: borderColor,
+        highlight: { background: impColor, border: ink },
+        hover:     { background: impColor, border: ink },
+      },
+      borderWidth: n.is_child ? 1 : 1.5,
+      borderWidthSelected: 3,
+      font: {
+        face: 'Iowan Old Style, Georgia, serif',
+        size: 12,
+        color: fontColor,
+        strokeWidth: 3,
+        strokeColor: paper,
+      },
+      title: n.label,
+    };
+  }
+
+  function edgeStyle(e) {
+    const dashed = e.kind === 'parent';
+    return {
+      id: e.from + '→' + e.to + ':' + e.kind,
+      from: e.from,
+      to:   e.to,
+      arrows: dashed ? { to: { enabled: true, scaleFactor: 0.4 } } : undefined,
+      dashes: dashed ? [4, 4] : false,
+      color: {
+        color: dashed ? inkGhost : ink,
+        highlight: ink,
+        hover: ink,
+        opacity: dashed ? 0.55 : 0.7,
+      },
+      width: dashed ? 0.9 : 1.1,
+      smooth: { type: 'continuous', roundness: 0.2 },
+      hoverWidth: 0,
+      selectionWidth: 1.2,
+    };
+  }
+
+  const gRes = await fetch('/api/graph').then(r => r.json());
+  if (gRes.error) {
+    metaEl.textContent = gRes.error;
+    toast(gRes.error, true);
+    return;
+  }
+  const visNodes = new vis.DataSet(gRes.nodes.map(nodeStyle));
+  const visEdges = new vis.DataSet(gRes.edges.map(edgeStyle));
+
+  const visible = gRes.nodes.filter(n => !n.is_child).length;
+  metaEl.textContent =
+    `${gRes.nodes.length} nodes (${visible} parents, ${gRes.nodes.length - visible} children) · ` +
+    `${gRes.edges.length} edges`;
+
+  const options = {
+    physics: {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: {
+        gravitationalConstant: -60,
+        centralGravity: 0.005,
+        springLength: 110,
+        springConstant: 0.1,
+        damping: 0.55,
+      },
+      stabilization: { iterations: 220 },
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 250,
+      dragView: true,
+      zoomView: true,
+    },
+    layout: { improvedLayout: true },
+  };
+
+  const network = new vis.Network(
+    graphEl, { nodes: visNodes, edges: visEdges }, options,
+  );
+
+  network.on('click', async (params) => {
+    if (!params.nodes.length) return;
+    const id = params.nodes[0];
+    await showDetail(id);
+  });
+
+  async function showDetail(id) {
+    detailEl.innerHTML =
+      '<h2>Node detail</h2><div class="nid">' + id + '</div>' +
+      '<p class="placeholder">Loading…</p>';
+    try {
+      const r = await fetch('/api/node/' + encodeURIComponent(id));
+      const body = await r.json();
+      if (!body.ok) {
+        detailEl.innerHTML = '<h2>Node detail</h2><p>' + (body.error || 'not found') + '</p>';
+        return;
+      }
+      renderDetail(body.node);
+    } catch (e) {
+      detailEl.innerHTML = '<h2>Node detail</h2><p>' + String(e) + '</p>';
+    }
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function renderDetail(n) {
+    const imp = (n.importance || 'MED').toUpperCase();
+    const impCls = imp === 'HIGH' ? 'high' : (imp === 'LOW' ? 'low' : '');
+    const badge = `<span class="imp-badge ${impCls}">${imp}</span>`;
+
+    const tags = (n.topic_tags || [])
+      .filter(t => !t.startsWith('IMPORTANCE:'))
+      .map(t => `<span class="tag">${esc(t)}</span>`)
+      .join('');
+
+    const linkedChildren = (n._linked_children || [])
+      .map(c => `<li><a data-id="${esc(c.id)}">${esc(c.label)}</a> <span class="nid">${esc(c.id)}</span></li>`)
+      .join('');
+    const peerLinks = (n.links || [])
+      .filter(lid => !(n._linked_children || []).some(c => c.id === lid))
+      .map(lid => `<li><a data-id="${esc(lid)}">${esc(lid)}</a></li>`)
+      .join('');
+
+    let html = '<h2>Node detail</h2>';
+    html += `<div class="nid">${esc(n.node_id)}${badge ? ' · ' + badge : ''}</div>`;
+
+    html += '<div class="section">Summary</div>';
+    html += `<p>${esc(n.summary || '(empty)')}</p>`;
+
+    if (n.trigger) {
+      html += '<div class="section">Trigger</div>';
+      html += `<p>${esc(n.trigger)}</p>`;
+    }
+
+    if (n.detailed_summary) {
+      html += '<div class="section">Detailed summary (tier 2, cached)</div>';
+      html += `<p>${esc(n.detailed_summary)}</p>`;
+    }
+
+    if (tags) {
+      html += '<div class="section">Tags</div>';
+      html += `<p>${tags}</p>`;
+    }
+
+    const meta = [
+      n.session_id ? 'session: ' + n.session_id.slice(0, 8) : null,
+      n.recall_mode ? 'recall: ' + n.recall_mode : null,
+      n.compaction_reason ? 'reason: ' + n.compaction_reason : null,
+      n.parent_node_id ? 'parent: ' + n.parent_node_id : null,
+    ].filter(Boolean).join(' · ');
+    if (meta) {
+      html += '<div class="section">Metadata</div>';
+      html += `<p class="nid">${esc(meta)}</p>`;
+    }
+
+    if (linkedChildren) {
+      html += '<div class="section">Linked children</div>';
+      html += `<ul>${linkedChildren}</ul>`;
+    }
+    if (peerLinks) {
+      html += '<div class="section">Peer links (similarity)</div>';
+      html += `<ul>${peerLinks}</ul>`;
+    }
+
+    detailEl.innerHTML = html;
+
+    detailEl.querySelectorAll('a[data-id]').forEach(a => {
+      a.addEventListener('click', () => {
+        const nid = a.getAttribute('data-id');
+        network.selectNodes([nid], true);
+        network.focus(nid, { scale: 1.2, animation: { duration: 400 } });
+        showDetail(nid);
+      });
+    });
+  }
+
+})();
+</script>
+</body>
+</html>

@@ -269,6 +269,14 @@ class NodeStore:
             if changed:
                 self._conn.commit()
 
+    def list_all(self) -> list[MemoryNode]:
+        """Every node in the store, most-recent first. Used by the graph view."""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {_COLUMNS} FROM nodes ORDER BY created_at DESC"
+            ).fetchall()
+        return [_row_to_node(r) for r in rows]
+
     def get_nodes(self, node_ids: list[str]) -> list[MemoryNode]:
         """Batch `get_node`. Preserves input order; silently drops missing."""
         if not node_ids:
