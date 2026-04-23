@@ -15,7 +15,6 @@ The rewrite function returned is what ProxyServer installs as its hook.
 from __future__ import annotations
 
 import json
-import time
 from queue import Queue
 from typing import Awaitable, Callable
 
@@ -98,13 +97,6 @@ def _compact_blocked_body() -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
-# Throttle: min gap between successive sensor enqueues on the same session.
-# Short enough that granularity isn't lost when the user pushes turns back-
-# to-back (which would otherwise pile into one mega-compact), long enough
-# that multi-request burst doesn't queue N identical checks.
-SENSOR_THROTTLE_SEC = 4.0
-
-
 def _synth_ack(summary_text: str) -> str:
     """Tiny fixed acknowledgment from the fake 'assistant' turn that pairs
     the summary. Keeps alternation intact without hallucinating content."""
@@ -170,15 +162,17 @@ class TrimOrchestrator:
         unabsorbed_msgs = [msgs[i] for i in unabsorbed_indices]
         bundled = bundle_l1({"messages": unabsorbed_msgs})
 
-        # Throttled sensor dispatch — don't hammer the worker.
-        now = time.monotonic()
+        # CoMeT fires the sensor every turn. We match that, except we
+        # dedupe via `sensor_queued` so a multi-request burst (CC sends
+        # sidecar + main together) doesn't queue two identical checks
+        # back-to-back. Worker clears the flag on pickup.
         ready = (
             len(bundled) >= config.MIN_L1_BUFFER
             and not state.compact_in_flight
-            and (now - state.last_sensor_check) >= SENSOR_THROTTLE_SEC
+            and not state.sensor_queued
         )
         if ready:
-            self.registry.touch_sensor(sid)
+            self.registry.mark_sensor_queued(sid)
             self.jobs.put({
                 "kind": "sensor_check",
                 "session_id": sid,
@@ -326,6 +320,10 @@ class TrimOrchestrator:
 
     def _do_sensor_check(self, job: dict) -> None:
         sid: str = job["session_id"]
+        # Reopen the queue slot immediately so the next incoming turn can
+        # enqueue a fresh sensor_check while this one is still running.
+        self.registry.mark_sensor_pickup(sid)
+
         # Each tuple is (fps_list, content_preview, raw_content). fps_list
         # has N entries for an N-message bundle, 1 entry for plain turns.
         buf_raw: list[tuple[list[str], str, str]] = job["buffer"]

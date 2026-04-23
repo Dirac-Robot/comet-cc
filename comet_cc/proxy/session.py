@@ -7,7 +7,6 @@ correctness risk since the store still has all previously saved nodes.
 from __future__ import annotations
 
 import threading
-import time
 from dataclasses import dataclass, field
 
 
@@ -25,13 +24,14 @@ class SessionState:
     summary_user: str | None = None
     summary_asst: str | None = None
 
-    # True while a sensor/compact job is in-flight for this session. Prevents
-    # re-queuing on every request when the worker is already busy.
+    # True while the compact LLM call is actually running. Worker sets it;
+    # request path reads it to avoid spawning duplicate compacts.
     compact_in_flight: bool = False
 
-    # Last time we kicked a sensor check for this session. Throttles how
-    # often we poll the sensor (monotonic clock seconds).
-    last_sensor_check: float = 0.0
+    # True once a sensor_check job for this session is in the queue or
+    # being worked on. Prevents a burst of CC requests from queueing N
+    # identical checks. Worker clears it on pickup.
+    sensor_queued: bool = False
 
 
 class SessionRegistry:
@@ -57,6 +57,20 @@ class SessionRegistry:
         with self._lock:
             return list(self._states.values())
 
+    def mark_sensor_queued(self, session_id: str) -> None:
+        with self._lock:
+            s = self._states.get(session_id)
+            if s:
+                s.sensor_queued = True
+
+    def mark_sensor_pickup(self, session_id: str) -> None:
+        """Worker calls this when it dequeues a sensor_check, reopening the
+        queue slot for the next request to enqueue as needed."""
+        with self._lock:
+            s = self._states.get(session_id)
+            if s:
+                s.sensor_queued = False
+
     def mark_compact_start(self, session_id: str) -> None:
         with self._lock:
             s = self._states.get(session_id)
@@ -74,18 +88,8 @@ class SessionRegistry:
             if not s:
                 return
             s.compact_in_flight = False
-            # Reset the throttle clock: the next incoming request should be
-            # free to queue a fresh sensor_check without waiting another
-            # SENSOR_THROTTLE_SEC window. Critical for compact granularity
-            # when a long compact ran while the user kept typing.
-            s.last_sensor_check = 0.0
             if summary_user and summary_asst:
                 s.absorbed_fps.update(absorbed_fps)
                 s.summary_user = summary_user
                 s.summary_asst = summary_asst
 
-    def touch_sensor(self, session_id: str) -> None:
-        with self._lock:
-            s = self._states.get(session_id)
-            if s:
-                s.last_sensor_check = time.monotonic()
