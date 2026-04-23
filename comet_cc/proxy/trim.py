@@ -392,6 +392,15 @@ class TrimOrchestrator:
                 if brief and brief.strip():
                     self.store.save_session_brief(sid, brief.strip())
 
+            # Bundle synthesis — for any tool_bundle L1 entries in this
+            # buffer, synthesize a bundle-parent node + per-call children,
+            # then link children under the parent so retrieval shows only
+            # the bundle-level summary and drill-down is available.
+            for mem in buffer:
+                if not mem.content.startswith("[tool_bundle]"):
+                    continue
+                self._synthesize_bundle_for(mem, sid, emb_source=node)
+
             # Flatten bundle fingerprints — each underlying message must
             # be marked absorbed individually so the rewrite path can mask
             # them out one by one.
@@ -414,3 +423,63 @@ class TrimOrchestrator:
             state = self.registry.get(sid)
             if state:
                 state.compact_in_flight = False
+
+    def _synthesize_bundle_for(
+        self, bundle_mem: "L1Memory", sid: str, emb_source: MemoryNode,
+    ) -> None:
+        """One bundle L1 entry → bundle parent node + N linked children.
+        Fails soft: if the synth LLM call returns None or empty children,
+        just log and move on — the turn-level compact still stands."""
+        from comet_cc.core import bundle_synth
+        synth = bundle_synth.synthesize(bundle_mem.raw_content)
+        if synth is None or not synth.summary or not synth.children:
+            logger.info(f"bundle synth skipped for session={sid[:8]} "
+                        f"(synth_none={synth is None})")
+            return
+
+        # Build children first so we can collect their ids for the parent's
+        # `links`. Children hide from retrieval via `parent_node_id`.
+        bundle_parent_id = MemoryNode.new_id()
+        child_nodes: list[MemoryNode] = []
+        for c in synth.children[:12]:  # cap so a runaway chain can't flood
+            child = MemoryNode(
+                node_id=MemoryNode.new_id(),
+                session_id=sid,
+                summary=c.summary,
+                trigger=c.trigger,
+                recall_mode="active",
+                importance="LOW",
+                topic_tags=[f"FROM_BUNDLE:{bundle_parent_id}",
+                            f"TOOL:{c.tool_name}",
+                            "IMPORTANCE:LOW"],
+                parent_node_id=bundle_parent_id,
+                depth_level=1,
+                compaction_reason="bundle_child",
+            )
+            child_nodes.append(child)
+
+        tags = list({t for t in synth.tags if t} | {f"IMPORTANCE:{synth.importance}"})
+        bundle_parent = MemoryNode(
+            node_id=bundle_parent_id,
+            session_id=sid,
+            summary=synth.summary,
+            trigger=synth.trigger,
+            recall_mode="active",
+            importance=synth.importance,
+            topic_tags=tags,
+            links=[c.node_id for c in child_nodes],
+            depth_level=1,
+            compaction_reason="bundle_parent",
+        )
+
+        from comet_cc.core import vector
+        parent_emb = vector.embed(f"{bundle_parent.summary}\n{bundle_parent.trigger}")
+        with self.store_lock:
+            # Save children FIRST so the parent's links reference existing rows.
+            for child in child_nodes:
+                self.store.save_node(child)
+            self.store.save_node(bundle_parent, embedding=parent_emb)
+        logger.info(
+            f"bundle[{sid[:8]}]: parent={bundle_parent_id} "
+            f"children={len(child_nodes)} imp={synth.importance}"
+        )
