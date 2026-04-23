@@ -8,6 +8,7 @@ handles store persistence so retries are trivial.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -20,6 +21,48 @@ _TEMPLATE_PATH = Path(__file__).parent.parent / "templates" / "compacting_base.t
 _TEMPLATE = _TEMPLATE_PATH.read_text(encoding="utf-8")
 
 _META_PREFIXES = ("ORIGIN:", "FLAG:", "SESSION:", "IMPORTANCE:")
+
+# Recognized turn-role prefixes (extractor.py emits "[user] ..." / "[assistant]
+# ..." per Anthropic API messages). Anything else (e.g. "[tool_bundle]") stays
+# inline as a free-form bracket tag — only matches in this set are promoted to
+# a role label so the prompt can show "USER vs ASSISTANT" cleanly.
+_ROLE_ALIASES = {
+    "user": "USER",
+    "human": "USER",
+    "assistant": "ASSISTANT",
+    "ai": "ASSISTANT",
+    "system": "SYSTEM",
+    "session": "SYSTEM",
+    "tool": "TOOL",
+}
+_ROLE_PREFIX_RE = re.compile(r"^\[([a-zA-Z][\w-]*)\]\s*", re.DOTALL)
+
+
+def _split_role(content: str) -> tuple[str | None, str]:
+    m = _ROLE_PREFIX_RE.match(content)
+    if not m:
+        return None, content
+    role = _ROLE_ALIASES.get(m.group(1).lower())
+    if role is None:
+        return None, content
+    return role, content[m.end():]
+
+
+def _format_turns_for_prompt(l1_buffer: list[L1Memory]) -> str:
+    """Render L1 buffer as role-labeled chat blocks for the compacter prompt.
+
+    Turns whose content starts with a recognized [role] prefix become
+    ``ROLE:\\n<body>`` blocks; other entries (tool bundles, external
+    content) fall through as bare bullet lines.
+    """
+    blocks: list[str] = []
+    for mem in l1_buffer:
+        role, body = _split_role(mem.content)
+        if role:
+            blocks.append(f"{role}:\n{body}")
+        else:
+            blocks.append(f"- {mem.content}")
+    return "\n\n".join(blocks)
 
 _JSON_INSTRUCTION = (
     "\n\n## Output Format (STRICT)\n"
@@ -52,7 +95,10 @@ def compact(
     Caller is responsible for store.save_node() and vector_index upsert —
     compacter stays side-effect-free so retries are trivial.
     """
-    turns_text = "\n".join(f"- {mem.content}" for mem in l1_buffer)
+    # Render turns as role-labeled blocks so summary can preserve
+    # who-said-what (user request vs assistant action) instead of
+    # flattening everything into one assistant-side narrative.
+    turns_text = _format_turns_for_prompt(l1_buffer)
 
     tag_pool = existing_tags or set()
     tag_pool = {t for t in tag_pool if not any(t.startswith(p) for p in _META_PREFIXES)}
