@@ -430,7 +430,14 @@ class TrimOrchestrator:
 
     def _cross_link(self, new_id: str, new_emb, sid: str) -> None:
         """Bidirectionally link a newly-saved node to its most-similar
-        same-session peers above CROSS_LINK_SIM_THRESHOLD."""
+        same-session peers above CROSS_LINK_SIM_THRESHOLD.
+
+        Bundle-parent nodes are excluded from the peer pool — they are
+        created with a complete, intentional link set (their synthesized
+        children) and should stay that way. Similarity cross-linking onto
+        a bundle weakens the "open the bundle to drill into its tool-call
+        children" retrieval contract by surfacing unrelated neighbors.
+        """
         if config.HOP1_DECAY == 0 and config.CROSS_LINK_TOP_K == 0:
             return
         cross = config.CROSS_SESSION_RETRIEVAL
@@ -438,7 +445,11 @@ class TrimOrchestrator:
             peers = self.store.list_active_with_embeddings(
                 session_id=sid, cross_session=cross,
             )
-        pairs = [(n.node_id, e) for n, e in peers if n.node_id != new_id]
+        pairs = [
+            (n.node_id, e) for n, e in peers
+            if n.node_id != new_id
+            and getattr(n, 'compaction_reason', '') != 'bundle_parent'
+        ]
         if not pairs:
             return
         hits = vector.cosine_search(
