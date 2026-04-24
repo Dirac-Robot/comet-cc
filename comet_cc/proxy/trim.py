@@ -272,7 +272,7 @@ class TrimOrchestrator:
         node_block = retriever.render_nodes(nodes)
         if node_block:
             parts.append(node_block)
-        parts.append(retriever.render_memory_cli_footer())
+        parts.append(retriever.render_memory_cli_footer(session_id))
         body = "\n\n".join(parts).strip()
         if not body:
             return ""

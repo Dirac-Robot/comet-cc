@@ -117,17 +117,25 @@ def render_session_brief(brief: str) -> str:
     return "# Session Brief\n" + brief.strip()
 
 
-_MEMORY_CLI_FOOTER = (
-    "# Memory CLI (for active recall when the above missed something)\n"
-    "- `comet-cc search \"<query>\" [--session <id>] [--top N]` — semantic "
-    "search across all sessions\n"
-    "- `comet-cc read-node <node_id>` — full details of a specific node\n"
-    "- `comet-cc list-session <session_id>` — every compacted node in a session\n"
-    "- `comet-cc brief <session_id>` — that session's live-rewritten brief\n"
-    "Use when the user references prior work not visible in the retrieved "
-    "memory above, or when a new task feels familiar."
+_MEMORY_CLI_FOOTER_TEMPLATE = (
+    "# Memory CLI (active recall when retrieval above missed something)\n"
+    "{session_line}"
+    "- `comet-cc search \"<query>\" [--session <id>] [--top N] [--min-score F] [--no-brief]`\n"
+    "  Semantic search across sessions (omit --session for cross-session).\n"
+    "- `comet-cc read-node <node_id> [--depth 0|1|2] [--links]`\n"
+    "  --depth 0 summary (default, same as retrieved above); 1 detailed LLM summary (~2-5s first call, cached); 2 raw verbatim turns (no LLM).\n"
+    "  --links also lists child nodes linked under this one.\n"
+    "- `comet-cc list-session <session_id> [--all]` — compacted nodes in a session (--all includes drill-down children).\n"
+    "- `comet-cc brief <session_id>` — that session's live-rewritten brief.\n"
+    "Only the flags above exist — do not guess `--raw`, `--follow-links`, "
+    "`--verbose`; use `--depth 2` or `--links` instead.\n"
+    "Use when the user references prior work not visible above, or when a "
+    "new task feels familiar."
 )
 
 
-def render_memory_cli_footer() -> str:
-    return _MEMORY_CLI_FOOTER
+def render_memory_cli_footer(session_id: str | None = None) -> str:
+    session_line = (
+        f"Current session: {session_id}\n" if session_id else ""
+    )
+    return _MEMORY_CLI_FOOTER_TEMPLATE.format(session_line=session_line)

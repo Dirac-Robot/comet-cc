@@ -50,6 +50,7 @@ headers; if you don't know it, omit the flag).
 comet-cc read-node <node_id>              # depth 0: summary only (cheapest)
 comet-cc read-node <node_id> --depth 1    # detailed summary (LLM-generated on first call, cached)
 comet-cc read-node <node_id> --depth 2    # raw turn data (exact verbatim text, no LLM)
+comet-cc read-node <node_id> --links      # also list child nodes linked under this one
 ```
 
 Pick the lowest depth that answers the question:
@@ -67,14 +68,35 @@ Escalate only as far as you need. Starting at depth 2 for a factual
 question wastes tokens; staying at depth 0 when the user asked "what
 exactly did I say" gives a paraphrase that misses the point.
 
+`--links` is orthogonal to `--depth` and combines freely; use it when a
+node is a bundle-parent or cluster head and you need to walk to its
+children. The real flag is `--links` (plural, no "follow-"); there is
+**no** `--raw`, `--follow-links`, or `--verbose` — use `--depth 2` and
+`--links`.
+
 ### List every node in the current session
 
 ```bash
-comet-cc list-session <session_id>
+comet-cc list-session <session_id>           # parent nodes only
+comet-cc list-session <session_id> --all     # include drill-down child nodes
 ```
 
 Chronological timeline of the session's compacted nodes. Useful when the
 user asks "what have we done so far" or you want to audit coverage.
+`--all` adds bundle children (individual tool calls inside a bundle
+parent) — usually noise unless you're inspecting a specific tool chain.
+
+### Finding the current session id
+
+`list-session` and `brief` both require a session id. You can get the
+current session's id from any of:
+- the `Current session: <sid>` line in the memory block injected at the
+  top of the last user message;
+- the `session=<sid>` field on retrieved nodes in that same block;
+- `comet-cc search "<any query>"` — matching nodes print `session=<sid>`.
+
+If none of those are present (fresh session, nothing compacted yet),
+there is nothing to list or brief for — skip instead of guessing an id.
 
 ### Read the session brief
 
