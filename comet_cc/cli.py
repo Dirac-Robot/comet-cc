@@ -241,7 +241,10 @@ def cmd_list_session(args) -> None:
 
 def cmd_graph(_args) -> None:
     """Start a local web server rendering the knowledge graph; open browser.
-    Runs in the foreground — Ctrl-C stops it."""
+    If the server is already listening on the fixed port, just re-open
+    the browser instead of trying (and failing) to bind a second one.
+    Otherwise run in the foreground — Ctrl-C stops it."""
+    import socket
     import threading
     import webbrowser
     from comet_cc.web import server as web_server
@@ -253,6 +256,20 @@ def cmd_graph(_args) -> None:
 
     host, port = "127.0.0.1", 8450
     url = f"http://{host}:{port}/"
+
+    # Probe the graph port. If something is already accepting connections
+    # on 127.0.0.1:8450 it's almost certainly our own web_server from a
+    # prior `comet-cc graph` invocation — bind-and-run would fail with
+    # EADDRINUSE, so short-circuit to just opening another browser tab.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        already_running = sock.connect_ex((host, port)) == 0
+
+    if already_running:
+        print(f"CoMeT-CC graph already running at {url} — opening browser.")
+        webbrowser.open(url)
+        return
+
     print(f"CoMeT-CC graph: {url}  (Ctrl-C to stop)")
     threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
