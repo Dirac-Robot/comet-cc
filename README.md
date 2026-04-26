@@ -7,7 +7,7 @@ summary), and forwarded to Anthropic. Drives summarization with `claude -p`
 subprocesses so there are no external API keys to manage — everything
 bills against your existing Claude subscription.
 
-> **Built on [CoMeT](https://github.com/Dirac-Robot/CoMeTPro)** — the
+> **Built on [CoMeT](https://github.com/Dirac-Robot/CoMeT)** — the
 > Cognitive Memory Tree system. A few things CoMeT brings to the table
 > that CoMeT-CC inherits directly:
 >
@@ -39,7 +39,7 @@ bills against your existing Claude subscription.
 > consolidation (dedup + cluster synthesis), multi-modality pipelines
 > (external content, file embedding), and session handoff. If your use
 > case needs any of those, go to
-> [CoMeT](https://github.com/Dirac-Robot/CoMeTPro) or
+> [CoMeT](https://github.com/Dirac-Robot/CoMeT) or
 > [CoBrA](https://github.com/Dirac-Robot/CoBrA) (which sits on top).
 
 ## How it works
@@ -240,7 +240,7 @@ graph expansion. Dropped: post-session consolidation (dedup, cluster
 synthesis, lessons extraction), multi-modality pipelines (external
 content, file embedding), session handoff / inherited memory. If those
 matter for your workflow, reach for the full
-[CoMeT](https://github.com/Dirac-Robot/CoMeTPro).
+[CoMeT](https://github.com/Dirac-Robot/CoMeT).
 
 ### Sensor input truncation (Claude-only constraint)
 
