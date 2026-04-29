@@ -329,6 +329,34 @@ aside from the forwarded-as-is HTTPS request to Anthropic.
 cases, and recovery after daemon restart (in-memory session state
 currently resets) are not yet broadly dogfooded.
 
+## Industry partner — Dimension
+
+The full [CoMeT](https://github.com/Dirac-Robot/CoMeT) /
+[CoBrA](https://github.com/Dirac-Robot/CoBrA) stack — from which
+CoMeT-CC inherits its sensor / compacter / 3-tier storage / bundle
+synthesis pipeline — is deployed in production at
+[**Dimension**](https://dimension.company/comet-cobra), a Korean CAD
+automation startup. Dimension targets the 40–60% of engineering time
+spent on manual CAD work, converting drawings, natural-language
+specs, and 3-D meshes into precise CAD models and driving parametric
+edits + assembly operations through agentic AI.
+
+Concrete CAD use-cases the memory layer powers:
+
+- **Text-to-CAD / drawing-to-CAD / CAD-to-drawing** — manufacturing
+  intelligence persisted as long-lived memory nodes; raw drawing kept
+  as tier-3 evidence.
+- **Parametric design iteration** — successive natural-language edits
+  to the same part replay against the linked node graph rather than
+  the dialogue scrollback.
+- **Assembly + parts-database workflows** — component memories (e.g.
+  `PartDB_Machine_Arm`) link into assembly-level nodes for drill-down
+  via 1-hop graph expansion.
+
+CoMeT-CC ports the memory primitives down to a single-session,
+Claude-Code-shaped scope; the deeper consolidation / multi-modality
+pipelines that drive the CAD workflows above live in full CoMeT.
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, research,
