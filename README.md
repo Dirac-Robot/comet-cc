@@ -335,11 +335,20 @@ The full [CoMeT](https://github.com/Dirac-Robot/CoMeT) /
 [CoBrA](https://github.com/Dirac-Robot/CoBrA) stack — from which
 CoMeT-CC inherits its sensor / compacter / 3-tier storage / bundle
 synthesis pipeline — is deployed in production at
-[**Dimension**](https://dimension.company/comet-cobra), a Korean CAD
-automation startup. Dimension targets the 40–60% of engineering time
-spent on manual CAD work, converting drawings, natural-language
-specs, and 3-D meshes into precise CAD models and driving parametric
-edits + assembly operations through agentic AI.
+[**Dimension**](https://dimension.company/) as the memory substrate
+behind their autonomous manufacturing intelligence platform.
+
+> Manufacturing is a $16T industry, but the design-to-production
+> process still depends on human engineers operating decades-old CAD
+> workflows. Dimension is building autonomous manufacturing
+> intelligence: AI agents that can design, engineer, and eventually
+> help produce physical products end-to-end. We start with CAD —
+> drawings, part search, modeling, reconstruction, and engineering
+> documentation — where our agents already deliver **40× to 4,800×
+> productivity gains**. In two months, we generated **$1.5M with six
+> Tier-1 manufacturers**. CAD is the entry; the long-term vision is
+> zero-human design, engineering, and production with physical
+> factory.
 
 Concrete CAD use-cases the memory layer powers:
 
