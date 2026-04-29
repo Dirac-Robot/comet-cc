@@ -372,6 +372,67 @@
     await showDetail(id);
   });
 
+  // ── Real-time graph updates via SSE ───────────────────────────────────
+  // The web server polls the daemon every ~2s and pushes node/edge diffs
+  // here so newly compacted memory (and similarity / parent-child links
+  // that follow) appear without a manual refresh.
+  function refreshMeta() {
+    const all = visNodes.get();
+    const visible = all.filter(n => !n.is_child).length;
+    metaEl.textContent =
+      `${all.length} nodes (${visible} parents, ${all.length - visible} children) · ` +
+      `${visEdges.length} edges`;
+  }
+
+  let sseRetry = 0;
+  function openEventStream() {
+    const sse = new EventSource('/api/events');
+    sse.onopen = () => { sseRetry = 0; };
+    sse.onmessage = (ev) => {
+      let diff;
+      try { diff = JSON.parse(ev.data); } catch (_e) { return; }
+      let touched = false;
+      if (diff.added_nodes && diff.added_nodes.length) {
+        // .update() upserts — safe even if the node was already present
+        // (e.g. a redundant add right after the initial /api/graph fetch
+        // races with a poll cycle that bootstrapped with stale state).
+        visNodes.update(diff.added_nodes.map(nodeStyle));
+        touched = true;
+      }
+      if (diff.updated_nodes && diff.updated_nodes.length) {
+        visNodes.update(diff.updated_nodes.map(nodeStyle));
+        touched = true;
+      }
+      if (diff.removed_node_ids && diff.removed_node_ids.length) {
+        visNodes.remove(diff.removed_node_ids);
+        touched = true;
+      }
+      if (diff.added_edges && diff.added_edges.length) {
+        visEdges.update(diff.added_edges.map(edgeStyle));
+        touched = true;
+      }
+      if (diff.removed_edges && diff.removed_edges.length) {
+        // edgeStyle()'s id format mirrors the server's `_edge_id` so a
+        // remove targets the same DataSet entry an earlier add wrote.
+        visEdges.remove(diff.removed_edges.map(e => edgeStyle(e).id));
+        touched = true;
+      }
+      if (touched) refreshMeta();
+    };
+    sse.onerror = () => {
+      // EventSource auto-reconnects, but if the daemon drops we want a
+      // visible signal in the meta line so users know they're stale.
+      sse.close();
+      sseRetry = Math.min(sseRetry + 1, 5);
+      const wait = 1000 * sseRetry;
+      setTimeout(openEventStream, wait);
+      if (sseRetry >= 3) {
+        toast('live updates paused — reconnecting…');
+      }
+    };
+  }
+  openEventStream();
+
   async function showDetail(id) {
     detailEl.innerHTML =
       '<h2>Node detail</h2><div class="nid">' + id + '</div>' +
