@@ -42,6 +42,22 @@ bills against your existing Claude subscription.
 > [CoMeT](https://github.com/Dirac-Robot/CoMeT) or
 > [CoBrA](https://github.com/Dirac-Robot/CoBrA) (which sits on top).
 
+## Quick start (10s)
+
+```bash
+pip install -e .
+comet-cc install        # CA cert + skill, one-time
+comet-cc daemon start   # background proxy
+comet-cc run claude     # Claude Code, now memory-backed
+```
+
+That's it. Use `claude` as usual — memory persists across turns and is
+auto-injected when relevant. Stop with `comet-cc daemon stop`.
+
+For GUI editors (VSCode / JetBrains / Cursor), see
+[GUI editors](#gui-editors-vscode--jetbrains--cursor) below. For why this
+exists and how it rewrites your turns, read on.
+
 ## How it works
 
 Every outgoing `/v1/messages` request passes through the proxy. Per-turn
